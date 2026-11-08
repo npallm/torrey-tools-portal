@@ -1,9 +1,11 @@
 import {
+  ChangeRequest,
   Employee,
   HrDocument,
   OnboardingTask,
   PerformanceReview,
   PtoRequest,
+  Separation,
 } from "./types";
 
 // Seed data for the portal shell. Swap these reads for Supabase queries once
@@ -22,6 +24,8 @@ export const employees: Employee[] = [
     employmentType: "Full-time",
     manager: null,
     status: "Active",
+    annualSalary: 98000,
+    payRangeMidpoint: 95000,
   },
   {
     id: "emp-002",
@@ -35,6 +39,8 @@ export const employees: Employee[] = [
     employmentType: "Full-time",
     manager: "Maya Chen",
     status: "Active",
+    annualSalary: 62000,
+    payRangeMidpoint: 68000,
   },
   {
     id: "emp-003",
@@ -48,6 +54,8 @@ export const employees: Employee[] = [
     employmentType: "Part-time",
     manager: "Maya Chen",
     status: "On leave",
+    annualSalary: 45000,
+    payRangeMidpoint: 47000,
   },
   {
     id: "emp-004",
@@ -61,6 +69,8 @@ export const employees: Employee[] = [
     employmentType: "Contract",
     manager: "Maya Chen",
     status: "Active",
+    annualSalary: 115000,
+    payRangeMidpoint: 105000,
   },
   {
     id: "emp-005",
@@ -74,6 +84,53 @@ export const employees: Employee[] = [
     employmentType: "Full-time",
     manager: "Jordan Reyes",
     status: "Active",
+    annualSalary: 58000,
+    payRangeMidpoint: 60000,
+  },
+];
+
+export const separations: Separation[] = [
+  {
+    id: "sep-001",
+    name: "Dana Okafor",
+    department: "Client Services",
+    endDate: "2026-03-14",
+    reason: "Voluntary",
+  },
+  {
+    id: "sep-002",
+    name: "Luis Herrera",
+    department: "Operations",
+    endDate: "2026-06-30",
+    reason: "Contract end",
+  },
+  {
+    id: "sep-003",
+    name: "Emily Tran",
+    department: "People",
+    endDate: "2026-09-19",
+    reason: "Voluntary",
+  },
+];
+
+export const changeRequests: ChangeRequest[] = [
+  {
+    id: "cr-001",
+    employeeId: "emp-002",
+    type: "Title change",
+    details: "Promote to Senior HR Coordinator after cert completion",
+    submittedBy: "Maya Chen",
+    submittedAt: "2026-11-05",
+    status: "Pending",
+  },
+  {
+    id: "cr-002",
+    employeeId: "emp-004",
+    type: "Schedule change",
+    details: "Move to 4x10 schedule starting December",
+    submittedBy: "Sam Whitaker",
+    submittedAt: "2026-11-06",
+    status: "Approved",
   },
 ];
 
@@ -217,6 +274,10 @@ export const reviews: PerformanceReview[] = [
     rating: "Exceeds",
   },
 ];
+
+export function compaRatio(e: Employee): number {
+  return e.annualSalary / e.payRangeMidpoint;
+}
 
 export function employeeById(id: string): Employee | undefined {
   return employees.find((e) => e.id === id);

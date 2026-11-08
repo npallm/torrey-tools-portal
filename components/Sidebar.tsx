@@ -3,7 +3,10 @@ import Link from "next/link";
 const nav = [
   { href: "/", label: "Dashboard" },
   { href: "/employees", label: "Employee Directory" },
+  { href: "/requests", label: "Change Requests" },
   { href: "/pto", label: "Time Off" },
+  { href: "/analytics", label: "Analytics" },
+  { href: "/integrations", label: "Integrations" },
   { href: "/documents", label: "Documents" },
   { href: "/onboarding", label: "Onboarding" },
   { href: "/reviews", label: "Reviews" },

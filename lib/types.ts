@@ -10,6 +10,8 @@ export type Employee = {
   employmentType: "Full-time" | "Part-time" | "Contract";
   manager: string | null;
   status: "Active" | "On leave" | "Offboarding";
+  annualSalary: number;
+  payRangeMidpoint: number;
 };
 
 export type PtoRequest = {
@@ -37,6 +39,41 @@ export type OnboardingTask = {
   label: string;
   dueDate: string;
   done: boolean;
+};
+
+export type Separation = {
+  id: string;
+  name: string;
+  department: string;
+  endDate: string;
+  reason: "Voluntary" | "Involuntary" | "Contract end";
+};
+
+export type ChangeRequestType =
+  | "Title change"
+  | "Compensation change"
+  | "Department transfer"
+  | "Schedule change"
+  | "Manager change"
+  | "Status change";
+
+export type ChangeRequest = {
+  id: string;
+  employeeId: string;
+  type: ChangeRequestType;
+  details: string;
+  submittedBy: string;
+  submittedAt: string;
+  status: "Pending" | "Approved" | "Denied";
+};
+
+export type FinchDirectoryEntry = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  department: string | null;
+  title: string | null;
+  isActive: boolean;
 };
 
 export type PerformanceReview = {
