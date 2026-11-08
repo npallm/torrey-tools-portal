@@ -1,6 +1,7 @@
 import { Badge } from "@/components/Badge";
 import { PageHeader } from "@/components/PageHeader";
 import { BarChart } from "@/components/analytics/BarChart";
+import { VizRequestForm } from "@/components/analytics/VizRequestForm";
 import {
   compaRatio,
   employees,
@@ -139,6 +140,8 @@ export default function AnalyticsPage() {
           ))}
         </ul>
       </section>
+
+      <VizRequestForm />
     </div>
   );
 }
