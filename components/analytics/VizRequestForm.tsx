@@ -16,10 +16,15 @@ type VizRequest = {
 const METRICS = [
   "Turnover",
   "Compa ratio",
+  "Labor cost",
   "Headcount",
   "PTO usage",
   "Tenure",
   "Absenteeism",
+  "Absence rate",
+  "Span of control",
+  "Vacancy rate",
+  "Performance ratings",
   "Other",
 ];
 

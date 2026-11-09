@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: torrey-db
+    environment:
+      POSTGRES_USER: torrey
+      POSTGRES_PASSWORD: torrey
+      POSTGRES_DB: torrey_portal
+    ports:
+      - "5432:5432"
+    volumes:
+      - torrey-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U torrey -d torrey_portal"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  torrey-db-data:
