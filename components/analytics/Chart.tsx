@@ -12,6 +12,8 @@ type Props = {
 
 const COLORS = ["#2563eb", "#059669", "#d97706", "#7c3aed", "#db2777", "#0891b2", "#65a30d"];
 
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
 export function formatMetricValue(value: number, unit: Unit, compact = false): string {
   if (!Number.isFinite(value)) return "n/a";
   if (unit === "percent") return `${value.toFixed(1)}%`;
@@ -22,7 +24,7 @@ export function formatMetricValue(value: number, unit: Unit, compact = false): s
       if (magnitude >= 1_000_000) return `$${(value / 1_000_000).toFixed(magnitude >= 10_000_000 ? 0 : 1)}M`;
       if (magnitude >= 1_000) return `$${(value / 1_000).toFixed(magnitude >= 10_000 ? 0 : 1)}K`;
     }
-    return `$${value.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+    return `$${Math.round(value).toLocaleString("en-US")}`;
   }
   if (unit === "years") return `${value.toFixed(1)} yrs`;
   if (unit === "days") return `${value.toLocaleString("en-US", { maximumFractionDigits: 1 })} days`;
@@ -249,10 +251,10 @@ function PieChart({ data, unit }: Omit<Props, "format" | "referenceLines">) {
         </g>
       );
     }
-    const outerStart = { x: cx + radius * Math.cos(start), y: cy + radius * Math.sin(start) };
-    const outerEnd = { x: cx + radius * Math.cos(end), y: cy + radius * Math.sin(end) };
-    const innerEnd = { x: cx + innerRadius * Math.cos(end), y: cy + innerRadius * Math.sin(end) };
-    const innerStart = { x: cx + innerRadius * Math.cos(start), y: cy + innerRadius * Math.sin(start) };
+    const outerStart = { x: round2(cx + radius * Math.cos(start)), y: round2(cy + radius * Math.sin(start)) };
+    const outerEnd = { x: round2(cx + radius * Math.cos(end)), y: round2(cy + radius * Math.sin(end)) };
+    const innerEnd = { x: round2(cx + innerRadius * Math.cos(end)), y: round2(cy + innerRadius * Math.sin(end)) };
+    const innerStart = { x: round2(cx + innerRadius * Math.cos(start)), y: round2(cy + innerRadius * Math.sin(start)) };
     const largeArc = fraction > 0.5 ? 1 : 0;
     const path = [
       `M ${outerStart.x} ${outerStart.y}`,
