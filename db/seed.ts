@@ -650,6 +650,12 @@ export async function seedDemo(pool: Pool): Promise<void> {
        values ($1,'2026 Annual',$2,'2026-01-01','2026-12-31','2026-11-15','2026-12-15','2027-01-15',true,true,'manager_review') returning id`,
       [organizationId, templateId],
     );
+    const historicalCycle = await client.query<{ id: string }>(
+      `insert into review_cycles
+         (organization_id,name,template_id,period_start,period_end,manager_due,calibration_due,include_self,include_peer,status)
+       values ($1,'2024 Annual',$2,'2024-01-01','2024-12-31','2024-12-15','2025-02-15',false,false,'closed') returning id`,
+      [organizationId, templateId],
+    );
     const goalsByWorker = new Map<string, { weight: number; progressPct: number }[]>();
     for (const [index, person] of activePeople.entries()) {
       const workerId = workerIds.get(person.id)!;
@@ -708,6 +714,72 @@ export async function seedDemo(pool: Pool): Promise<void> {
           }
         }
       }
+    }
+
+    const priorOutcomes = await client.query<{
+      worker_id: string;
+      calibrated_rating: string | number | null;
+    }>(
+      `select worker_id, calibrated_rating
+       from review_outcomes where cycle_id = $1 and organization_id = $2`,
+      [oldCycle.rows[0].id, organizationId],
+    );
+    const priorRatingByWorker = new Map(priorOutcomes.rows.map((row) => [row.worker_id, row.calibrated_rating]));
+    for (const [index, person] of activePeople.entries()) {
+      if (person.hireDate >= "2024-01-01") continue;
+      const workerId = workerIds.get(person.id)!;
+      const currentRating = priorRatingByWorker.get(workerId);
+      if (currentRating === null || currentRating === undefined) {
+        throw new Error(`Missing 2025 calibrated rating for ${person.id}`);
+      }
+      const goals = [
+        { weight: 60, progressPct: 35 + (index % 7) * 10 },
+        { weight: 40, progressPct: 25 + (index % 8) * 10 },
+      ];
+      for (const [goalIndex, goal] of goals.entries()) {
+        await client.query(
+          `insert into goals (organization_id,worker_id,cycle_id,title,description,weight,progress_pct,status,due_date)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,'2024-12-31')`,
+          [organizationId, workerId, historicalCycle.rows[0].id, `2024 goal ${goalIndex + 1} · ${person.department}`,
+            "Deliver a measurable team or role outcome.", goal.weight, goal.progressPct,
+            goal.progressPct >= 70 ? "on_track" : "at_risk"],
+        );
+      }
+      const reviewerId = person.managerId ? workerIds.get(person.managerId)! : workerId;
+      const assignment = await client.query<{ id: string }>(
+        `insert into review_assignments
+           (organization_id,cycle_id,subject_worker_id,reviewer_worker_id,reviewer_role,status,submitted_at)
+         values ($1,$2,$3,$4,'manager','submitted',now()) returning id`,
+        [organizationId, historicalCycle.rows[0].id, workerId, reviewerId],
+      );
+      const managerRatings = reviewItems.slice(0, 5).map((itemId, itemIndex) => ({
+        itemId,
+        rating: 2 + ((index + itemIndex + 2) % 4),
+      }));
+      for (const response of managerRatings) {
+        await client.query(
+          `insert into review_item_responses (assignment_id,template_item_id,rating_value,comment)
+           values ($1,$2,$3,$4)`,
+          [assignment.rows[0].id, response.itemId, response.rating, "Historical example-based feedback."],
+        );
+      }
+      const proposed = proposedRating({
+        managerItems: managerRatings.map((item) => ({ weight: 20, rating: item.rating })),
+        goals,
+        includeGoals: true,
+        goalsWeight: 30,
+        scaleMin: 1,
+        scaleMax: 5,
+      });
+      const current = Number(currentRating);
+      const offset = index % 3 === 0 ? -0.6 : index % 3 === 1 ? 0 : current <= 4.4 ? 0.6 : -0.6;
+      const calibrated = Math.round(Math.min(5, Math.max(1, current + offset)) * 100) / 100;
+      await client.query(
+        `insert into review_outcomes
+           (organization_id,cycle_id,worker_id,proposed_rating,calibrated_rating,calibration_notes)
+         values ($1,$2,$3,$4,$5,'Historical 2024 calibration')`,
+        [organizationId, historicalCycle.rows[0].id, workerId, proposed, calibrated],
+      );
     }
 
     for (const [index, person] of activePeople.entries()) {

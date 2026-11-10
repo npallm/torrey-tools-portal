@@ -78,8 +78,10 @@ describe("approval chains", () => {
     expect(e.body).toContain("(step 2 of 3)");
     expect(e.body).toContain("Current: $62,000\nRequested: $68,000\nEffective: 2026-12-01\nReason: Market adjustment");
     expect(e.body).toContain("http://localhost:3000/approvals/tok");
-    expect(decisionEmail({ submitterName: "Maya", subjectName: "Jordan", changeType: "Title", outcome: "rejected", deciderName: "Vic", comment: "No", link: "x" }).subject).toBe(
+    const decision = decisionEmail({ submitterName: "Maya", subjectName: "Jordan", changeType: "Title change", outcome: "rejected", deciderName: "Vic", comment: "No", link: "x" });
+    expect(decision.subject).toBe(
       "Change request for Jordan was rejected",
     );
+    expect(decision.body).toContain("Your title change request for Jordan was rejected by Vic.");
   });
 });

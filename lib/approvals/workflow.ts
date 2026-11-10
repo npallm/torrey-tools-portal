@@ -132,13 +132,17 @@ export type ChangeRequestEmailInput = {
   link: string;
 };
 
+function changeTypeRequestLabel(changeType: string): string {
+  return `${changeType.toLowerCase().replace(/ change$/, "")} change request`;
+}
+
 export function approvalRequestEmail(e: ChangeRequestEmailInput): { subject: string; body: string } {
   return {
     subject: `${e.submitterName} submitted a change request for ${e.subjectName}`,
     body: [
       `Hi ${e.approverName},`,
       "",
-      `${e.submitterName} submitted a ${e.changeType.toLowerCase()} change request for ${e.subjectName}, and it needs your approval (step ${e.stepNumber} of ${e.totalSteps}).`,
+      `${e.submitterName} submitted a ${changeTypeRequestLabel(e.changeType)} for ${e.subjectName}, and it needs your approval (step ${e.stepNumber} of ${e.totalSteps}).`,
       "",
       `Current: ${e.currentValue?.trim() || "—"}`,
       `Requested: ${e.requestedValue}`,
@@ -164,7 +168,7 @@ export function decisionEmail(e: {
     body: [
       `Hi ${e.submitterName},`,
       "",
-      `Your ${e.changeType.toLowerCase()} change request for ${e.subjectName} was ${e.outcome} by ${e.deciderName}.`,
+      `Your ${changeTypeRequestLabel(e.changeType)} for ${e.subjectName} was ${e.outcome} by ${e.deciderName}.`,
       ...(e.comment ? ["", `Comment: ${e.comment}`] : []),
       "",
       `View the request: ${e.link}`,

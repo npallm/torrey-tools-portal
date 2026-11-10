@@ -84,20 +84,21 @@ export async function saveApprovalTemplateAction(formData: FormData) {
   } catch (error) {
     redirect(`/approvals/templates?error=${encodeURIComponent(messageFrom(error))}`);
   }
+  let id: string;
   try {
-    const id = await saveApprovalTemplate({
+    id = await saveApprovalTemplate({
       id: String(formData.get("templateId") ?? "") || undefined,
       name,
       changeType: changeType as ChangeType | null,
       isDefault: formData.get("isDefault") === "on",
       steps,
     });
-    revalidatePath("/approvals/templates");
-    revalidatePath("/requests");
-    redirect(`/approvals/templates?saved=${encodeURIComponent(id)}`);
   } catch (error) {
     redirect(`/approvals/templates?error=${encodeURIComponent(messageFrom(error))}`);
   }
+  revalidatePath("/approvals/templates");
+  revalidatePath("/requests");
+  redirect(`/approvals/templates?saved=${encodeURIComponent(id)}`);
 }
 
 export async function archiveApprovalTemplateAction(formData: FormData) {

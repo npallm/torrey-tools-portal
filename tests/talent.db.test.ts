@@ -7,7 +7,7 @@ import { getShareScores, submitManagerSurveyResponse } from "@/lib/server/survey
 import { getOneOnOneDashboard } from "@/lib/server/oneOnOnes";
 import { getSuccessionDashboard } from "@/lib/server/succession";
 import { actionItemStatus, oneOnOneHealth } from "@/lib/talent/oneOnOnes";
-import { benchStrength, riskBand, roleRiskScore } from "@/lib/talent/succession";
+import { benchStrength, performanceTrend, riskBand, roleRiskScore } from "@/lib/talent/succession";
 import { proposedRating } from "@/lib/talent/reviews";
 
 const databaseDescribe = process.env.DATABASE_URL ? describe : describe.skip;
@@ -249,5 +249,27 @@ databaseDescribe("seeded talent database pipelines", () => {
       expect(role.riskBand).toBe(riskBand(role.riskScore));
       expect(role.bench).toEqual(benchStrength(role.candidates.map((candidate) => ({ readiness: candidate.readiness }))));
     }
+    const organization = await organizationId();
+    for (const person of succession.talentPool) {
+      const rawRatings = await db().query<{ calibrated_rating: string | number }>(
+        `select o.calibrated_rating
+         from review_outcomes o join review_cycles c on c.id = o.cycle_id
+         where o.worker_id = $1 and o.organization_id = $2
+           and o.calibrated_rating is not null and c.status in ('released', 'closed')
+         order by c.period_start, c.id, o.id`,
+        [person.workerId, organization],
+      );
+      const ratings = rawRatings.rows.map((row) => Number(row.calibrated_rating));
+      expect(person.performanceRatings).toEqual(ratings);
+      expect(person.performanceTrend).toBe(performanceTrend(ratings));
+    }
+    const trendCounts = new Map<string, number>();
+    for (const person of succession.talentPool) {
+      trendCounts.set(person.performanceTrend, (trendCounts.get(person.performanceTrend) ?? 0) + 1);
+    }
+    expect((trendCounts.get("Rising") ?? 0)).toBeGreaterThan(0);
+    expect((trendCounts.get("Steady") ?? 0)).toBeGreaterThan(0);
+    expect((trendCounts.get("Declining") ?? 0)).toBeGreaterThan(0);
+    expect(succession.talentPool.length - (trendCounts.get("Insufficient data") ?? 0)).toBeGreaterThan(succession.talentPool.length / 2);
   });
 });

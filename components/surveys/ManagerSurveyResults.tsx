@@ -73,6 +73,19 @@ export function ManagerSurveyResults({ initialData }: { initialData: SurveyData 
 
   return (
     <section className="mt-6">
+      <div className="mb-5 grid gap-3 sm:grid-cols-4">
+        {[
+          ["Invited", String(data.invited)],
+          ["Responded", String(data.responded)],
+          ["Response rate", data.responseRate === null ? "—" : `${data.responseRate.toFixed(1)}%`],
+          ["Managers scored", `${data.managersScored} of ${data.managerCount}`],
+        ].map(([label, value]) => (
+          <div key={label} className="rounded-lg border bg-white p-4">
+            <p className="text-xs uppercase text-slate-500">{label}</p>
+            <p className="mt-1 text-xl font-semibold">{value}</p>
+          </div>
+        ))}
+      </div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex gap-2">
           <button

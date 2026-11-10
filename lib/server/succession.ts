@@ -111,7 +111,8 @@ export async function getSuccessionDashboard(filters: {
         `select o.worker_id, c.id as cycle_id, c.period_start, o.calibrated_rating
          from review_outcomes o join review_cycles c on c.id = o.cycle_id
          where o.organization_id = $1 and o.calibrated_rating is not null
-         order by c.period_start, o.calibrated_rating`,
+           and c.status in ('released', 'closed')
+         order by c.period_start, c.id, o.id`,
         [organizationId],
       ),
     ]);
@@ -379,8 +380,9 @@ export async function getTalentPersonProfile(workerId: string) {
       pool.query<{ period_start: string; calibrated_rating: string | number }>(
         `select c.period_start, o.calibrated_rating
          from review_outcomes o join review_cycles c on c.id = o.cycle_id
-         where o.worker_id = $1 and o.organization_id = $2 and o.calibrated_rating is not null
-         order by c.period_start`,
+         where o.worker_id = $1 and o.organization_id = $2
+           and o.calibrated_rating is not null and c.status in ('released', 'closed')
+         order by c.period_start, c.id, o.id`,
         [workerId, organizationId],
       ),
       pool.query<{
