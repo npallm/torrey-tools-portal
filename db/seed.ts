@@ -1,6 +1,8 @@
 import { basename } from "node:path";
+import { randomBytes } from "node:crypto";
 import type { Pool } from "pg";
 import { METRICS } from "../lib/metrics/catalog";
+import { managerChain } from "../lib/org/hierarchy";
 import {
   seedJobTitles,
   seedNonExemptPersonIdsList,
@@ -8,6 +10,10 @@ import {
 } from "../lib/seed/workforce";
 import type { WorkforcePerson } from "../lib/metrics/types";
 import { createPool, loadEnvLocal } from "./env";
+import { MANAGER_QUESTION_BANK } from "../lib/surveys/managerQuestions";
+import { tenureBand } from "../lib/surveys/results";
+import { refreshManagerSurveySnapshots } from "../lib/server/surveys";
+import { proposedRating } from "../lib/talent/reviews";
 
 const cents = (amount: number) => Math.round(amount * 100);
 
@@ -73,17 +79,45 @@ export async function seedDemo(pool: Pool): Promise<void> {
     const organizationId = organizationResult.rows[0].id;
     const people = seedWorkforce.people;
 
+    for (const [position, question] of MANAGER_QUESTION_BANK.entries()) {
+      await client.query(
+        `insert into survey_question_bank (organization_id, category, prompt, active, position)
+         values ($1, $2, $3, true, $4)`,
+        [organizationId, question.category, question.prompt, position],
+      );
+    }
+
     const departmentNames = [
       ...new Set([
         ...people.map((person) => person.department),
         ...seedWorkforce.positions.map((position) => position.department),
       ]),
     ];
+    const divisionDepartments: Record<string, string[]> = {
+      Revenue: ["Client Services"],
+      Operations: ["Operations", "Finance"],
+      "People & Technology": ["People", "Technology"],
+    };
+    const divisionByDepartment = new Map(
+      Object.entries(divisionDepartments).flatMap(([division, children]) =>
+        children.map((department) => [department, division] as const),
+      ),
+    );
     const departmentIds = new Map<string, string>();
+    const divisionIds = new Map<string, string>();
+    for (const division of Object.keys(divisionDepartments)) {
+      const result = await client.query<{ id: string }>(
+        `insert into departments (organization_id, name, unit_type)
+         values ($1, $2, 'division') returning id`,
+        [organizationId, division],
+      );
+      divisionIds.set(division, result.rows[0].id);
+    }
     for (const name of departmentNames) {
       const result = await client.query<{ id: string }>(
-        "insert into departments (organization_id, name) values ($1, $2) returning id",
-        [organizationId, name],
+        `insert into departments (organization_id, name, unit_type, parent_id)
+         values ($1, $2, 'department', $3) returning id`,
+        [organizationId, name, divisionIds.get(divisionByDepartment.get(name) ?? "") ?? null],
       );
       departmentIds.set(name, result.rows[0].id);
     }
@@ -419,6 +453,349 @@ export async function seedDemo(pool: Pool): Promise<void> {
           [organizationId, payStatementId, cents(statement.employerContributions)],
         );
       }
+    }
+
+    const activePeople = people.filter((person) => !person.terminationDate);
+    const hierarchyPeople = activePeople.map((person) => ({
+      id: person.id,
+      name: person.name,
+      managerId: person.managerId,
+    }));
+    const today = seedWorkforce.organization.asOfDate;
+    const surveyConfigs = [
+      { title: "2026 Manager Effectiveness Survey", status: "closed", opened: "2026-09-15", respondedRatio: 0.85, includeContingent: true },
+      { title: "Q4 Manager Pulse", status: "open", opened: "2026-11-03", respondedRatio: 0.5, includeContingent: true },
+    ] as const;
+    for (const [surveyIndex, config] of surveyConfigs.entries()) {
+      const surveyResult = await client.query<{ id: string }>(
+        `insert into surveys
+           (organization_id, title, description, kind, survey_type, status,
+            anonymity_threshold, opens_at, closes_at, include_contingent_workers)
+         values ($1, $2, $3, 'custom', 'manager_effectiveness', $4, 5, $5, $6, $7)
+         returning id`,
+        [
+          organizationId,
+          config.title,
+          "Confidential feedback about manager effectiveness.",
+          config.status,
+          config.opened,
+          config.status === "closed" ? "2026-09-30" : "2026-11-30",
+          config.includeContingent,
+        ],
+      );
+      const surveyId = surveyResult.rows[0].id;
+      const questions = [];
+      for (const [position, question] of MANAGER_QUESTION_BANK.entries()) {
+        const result = await client.query<{ id: string }>(
+          `insert into survey_questions
+             (organization_id, survey_id, position, question_type, prompt, dimension, reverse_scored, required)
+           values ($1, $2, $3, 'likert5', $4, $5, false, true) returning id`,
+          [organizationId, surveyId, position, question.prompt, question.category],
+        );
+        questions.push({ id: result.rows[0].id, category: question.category });
+      }
+      const invitees = activePeople.filter(
+        (person) =>
+          person.managerId &&
+          (config.includeContingent || person.workerType === "Employee"),
+      );
+      const orderedInvitees = invitees.map((person) => {
+        const workerId = workerIds.get(person.id)!;
+        const chain = managerChain(person.id, hierarchyPeople).map((id) => workerIds.get(id) ?? id);
+        return { person, workerId, chain, inviteToken: randomBytes(24).toString("base64url") };
+      });
+      const reportCounts = new Map<string, number>();
+      const seenByManager = new Map<string, number>();
+      for (const invitee of orderedInvitees) {
+        const managerId = invitee.person.managerId!;
+        reportCounts.set(managerId, (reportCounts.get(managerId) ?? 0) + 1);
+      }
+      for (const [index, invitee] of orderedInvitees.entries()) {
+        const directManagerId = invitee.person.managerId!;
+        const managerPosition = seenByManager.get(directManagerId) ?? 0;
+        seenByManager.set(directManagerId, managerPosition + 1);
+        const managerTarget = Math.round((reportCounts.get(directManagerId) ?? 0) * config.respondedRatio);
+        const hasResponded = managerPosition < managerTarget;
+        const email = `${invitee.person.id}@example.invalid`;
+        const result = await client.query<{ id: string }>(
+          `insert into survey_invitations
+             (organization_id, survey_id, worker_id, token, division, department, location,
+              worker_type, tenure_band, manager_chain, submitted_at)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+             case when $11 then ($12::date + ($13::int % 12))::timestamptz else null end)
+           returning id`,
+          [
+            organizationId,
+            surveyId,
+            invitee.workerId,
+            invitee.inviteToken,
+            divisionByDepartment.get(invitee.person.department) ?? null,
+            invitee.person.department,
+            invitee.person.location,
+            invitee.person.workerType === "Contingent" ? "contractor" : "employee",
+            tenureBand(invitee.person.hireDate, today),
+            invitee.chain,
+            hasResponded,
+            config.opened,
+            index,
+          ],
+        );
+        const invitationId = result.rows[0].id;
+        await client.query(
+          `insert into outbox_messages
+             (organization_id, to_email, subject, body, link_path, related_table, related_id)
+           values ($1,$2,$3,$4,$5,'survey_invitations',$6)`,
+          [organizationId, email, config.title, `Please share feedback: /s/${invitee.inviteToken}`, `/s/${invitee.inviteToken}`, invitationId],
+        );
+        if (!hasResponded) continue;
+        const responseDate = config.status === "closed" ? "2026-09-16" : "2026-11-04";
+        const response = await client.query<{ id: string }>(
+          `insert into survey_responses (organization_id, survey_id, invitation_id, submitted_at)
+           values ($1, $2, $3, ($4::date + ($5::int % 10))::timestamptz) returning id`,
+          [organizationId, surveyId, invitationId, responseDate, index],
+        );
+        const managerNumber = Number(invitee.person.managerId!.slice(-3));
+        const managerMean: Record<number, number> = { 1: 4, 2: 3, 9: 5, 10: 3, 11: 5, 12: 3 };
+        const baseScore = managerMean[managerNumber] ?? 3 + (managerNumber % 2);
+        for (const [questionIndex, question] of questions.entries()) {
+          const value = Math.max(1, Math.min(5, baseScore + (questionIndex % 3) - 1));
+          await client.query(
+            `insert into survey_answers (response_id, question_id, numeric_value) values ($1,$2,$3)`,
+            [response.rows[0].id, question.id, value],
+          );
+        }
+      }
+      const managerTokens = new Map<string, string>();
+      for (const invitee of orderedInvitees) {
+        const managerId = invitee.chain[0];
+        if (!managerId || managerTokens.has(managerId)) continue;
+        const shareToken = randomBytes(24).toString("base64url");
+        const share = await client.query<{ id: string }>(
+          `insert into survey_result_shares
+             (organization_id, survey_id, recipient_worker_id, recipient_email, scope_sup_org_leader_id, token)
+           values ($1,$2,$3,$4,$3,$5) returning id`,
+          [organizationId, surveyId, managerId, `${invitee.person.managerId}@example.invalid`, shareToken],
+        );
+        managerTokens.set(managerId, shareToken);
+        await client.query(
+          `insert into outbox_messages
+             (organization_id, to_email, subject, body, link_path, related_table, related_id)
+           values ($1,$2,$3,$4,$5,'survey_result_shares',$6)`,
+          [organizationId, `${invitee.person.managerId}@example.invalid`, `${config.title} results`, `View results: /r/${shareToken}`, `/r/${shareToken}`, share.rows[0].id],
+        );
+      }
+      await refreshManagerSurveySnapshots(client, organizationId, surveyId);
+    }
+
+    const ratingPoints = [
+      { value: 1, label: "Needs improvement", description: "Does not consistently meet expectations." },
+      { value: 2, label: "Partially meets", description: "Meets some expectations; development needed." },
+      { value: 3, label: "Meets", description: "Consistently meets role expectations." },
+      { value: 4, label: "Exceeds", description: "Frequently exceeds role expectations." },
+      { value: 5, label: "Exceptional", description: "Consistently delivers exceptional impact." },
+    ];
+    const scale = await client.query<{ id: string }>(
+      "insert into rating_scales (organization_id, name, points) values ($1,$2,$3) returning id",
+      [organizationId, "Five-point performance scale", JSON.stringify(ratingPoints)],
+    );
+    const template = await client.query<{ id: string }>(
+      `insert into review_templates
+         (organization_id, name, description, rating_scale_id, include_goals, goals_weight)
+       values ($1,'Annual review','Balanced competency and goal assessment',$2,true,30) returning id`,
+      [organizationId, scale.rows[0].id],
+    );
+    const templateId = template.rows[0].id;
+    const reviewItems: string[] = [];
+    for (const [position, title] of [
+      "Role expertise", "Quality and delivery", "Collaboration", "Ownership and judgment",
+      "Growth and adaptability", "What should this person continue or change?",
+    ].entries()) {
+      const item = await client.query<{ id: string }>(
+        `insert into review_template_items
+           (organization_id, template_id, position, item_type, title, description, weight, rated, applies_to)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,'{self,manager,peer}') returning id`,
+        [organizationId, templateId, position, position === 5 ? "question" : "competency", title,
+          position === 5 ? "Share a specific example." : "Reflect on outcomes and behaviors.", position === 5 ? 0 : 20, position !== 5],
+      );
+      reviewItems.push(item.rows[0].id);
+    }
+    const oldCycle = await client.query<{ id: string }>(
+      `insert into review_cycles
+         (organization_id,name,template_id,period_start,period_end,self_due,manager_due,calibration_due,include_self,include_peer,status)
+       values ($1,'2025 Annual',$2,'2025-01-01','2025-12-31','2025-12-01','2026-01-15','2026-02-15',true,true,'closed') returning id`,
+      [organizationId, templateId],
+    );
+    const openCycle = await client.query<{ id: string }>(
+      `insert into review_cycles
+         (organization_id,name,template_id,period_start,period_end,self_due,manager_due,calibration_due,include_self,include_peer,status)
+       values ($1,'2026 Annual',$2,'2026-01-01','2026-12-31','2026-11-15','2026-12-15','2027-01-15',true,true,'manager_review') returning id`,
+      [organizationId, templateId],
+    );
+    const goalsByWorker = new Map<string, { weight: number; progressPct: number }[]>();
+    for (const [index, person] of activePeople.entries()) {
+      const workerId = workerIds.get(person.id)!;
+      const goals = [
+        { weight: 60, progressPct: 30 + (index % 7) * 10 },
+        { weight: 40, progressPct: 20 + (index % 8) * 10 },
+      ];
+      goalsByWorker.set(workerId, goals);
+      for (const [goalIndex, goal] of goals.entries()) {
+        await client.query(
+          `insert into goals (organization_id,worker_id,cycle_id,title,description,weight,progress_pct,status,due_date)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,'2026-12-31')`,
+          [organizationId, workerId, openCycle.rows[0].id, `2026 goal ${goalIndex + 1} · ${person.department}`,
+            "Deliver a measurable team or role outcome.", goal.weight, goal.progressPct,
+            goal.progressPct >= 70 ? "on_track" : "at_risk"],
+        );
+      }
+      for (const [cycleIndex, cycleId] of [oldCycle.rows[0].id, openCycle.rows[0].id].entries()) {
+        const reviewerId = person.managerId ? workerIds.get(person.managerId)! : workerId;
+        for (const role of ["self", "manager"] as const) {
+          const submitted = cycleIndex === 0 || (role === "self" ? index % 7 !== 0 : index % 2 === 0);
+          const assignment = await client.query<{ id: string }>(
+            `insert into review_assignments
+               (organization_id,cycle_id,subject_worker_id,reviewer_worker_id,reviewer_role,status,submitted_at)
+             values ($1,$2,$3,$4,$5,$6,case when $6='submitted' then now() else null end) returning id`,
+            [organizationId, cycleId, workerId, role === "self" ? workerId : reviewerId, role, submitted ? "submitted" : "in_progress"],
+          );
+          if (role === "manager") {
+            const managerRatings = reviewItems.slice(0, 5).map((_, itemIndex) => {
+              const value = 2 + ((index + itemIndex + cycleIndex) % 4);
+              return { itemId: reviewItems[itemIndex], rating: value };
+            });
+            for (const response of managerRatings) {
+              await client.query(
+                `insert into review_item_responses (assignment_id,template_item_id,rating_value,comment)
+                 values ($1,$2,$3,$4)`,
+                [assignment.rows[0].id, response.itemId, response.rating, "Example-based feedback."],
+              );
+            }
+            const proposed = proposedRating({
+              managerItems: managerRatings.map((item) => ({ weight: 20, rating: item.rating })),
+              goals,
+              includeGoals: true,
+              goalsWeight: 30,
+              scaleMin: 1,
+              scaleMax: 5,
+            });
+            await client.query(
+              `insert into review_outcomes
+                 (organization_id,cycle_id,worker_id,proposed_rating,calibrated_rating,calibration_notes)
+               values ($1,$2,$3,$4,$5,$6)`,
+              [organizationId, cycleId, workerId, proposed,
+                cycleIndex === 0 && proposed !== null ? Math.max(1, Math.min(5, proposed + (index % 6 === 0 ? 0.2 : 0))) : null,
+                cycleIndex === 0 && index % 6 === 0 ? "Calibration discussion" : null],
+            );
+          }
+        }
+      }
+    }
+
+    for (const [index, person] of activePeople.entries()) {
+      const workerId = workerIds.get(person.id)!;
+      const assessmentCount = index % 9 === 0 ? 2 : 1;
+      for (let history = 0; history < assessmentCount; history++) {
+        const scores = index % 7 === 0 && history === 0
+          ? [3, 3, 3]
+          : [
+              1 + ((index + history) % 3),
+              1 + ((index + 1 + history) % 3),
+              1 + ((index + 2) % 3),
+            ];
+        await client.query(
+          `insert into talent_profiles
+             (organization_id,worker_id,assessed_on,aspiration,ability,engagement,flight_risk,impact_of_loss,
+              retirement_within_2_years,open_to_relocation,career_interests,skills,notes)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+          [organizationId, workerId, history ? "2025-11-08" : today,
+            scores[0], scores[1], scores[2],
+            index % 8 === 0 ? "high" : index % 3 === 0 ? "medium" : "low",
+            index % 5 === 0 ? "high" : "medium", index % 13 === 0, index % 4 === 0,
+            "Leadership, systems, customer outcomes", ["Coaching", "Planning", "Communication"].slice(0, 1 + index % 3),
+            history ? "Prior annual talent discussion." : null],
+        );
+      }
+    }
+    const roleRows: { id: string; incumbent: string; department: string }[] = [];
+    for (const [index, employeeId] of ["emp-001","emp-002","emp-009","emp-010","emp-011","emp-012"].entries()) {
+      const person = people.find((row) => row.id === employeeId)!;
+      const role = await client.query<{ id: string }>(
+        `insert into critical_roles
+           (organization_id,title,department_id,incumbent_worker_id,impact_of_loss,probability_of_loss,required_skills,rationale,reviewed_on)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id`,
+        [organizationId, seedJobTitles[employeeId], departmentIds.get(person.department), workerIds.get(employeeId),
+          index === 0 ? 5 : 3 + (index % 3), index === 0 ? 5 : 2 + (index % 4), ["Leadership", "Strategy", "Coaching"],
+          "Role continuity and knowledge retention.", today],
+      );
+      roleRows.push({ id: role.rows[0].id, incumbent: employeeId, department: person.department });
+    }
+    const readyStates = ["ready_now","ready_1_2_years","ready_3_plus_years"];
+    for (const [roleIndex, role] of roleRows.entries()) {
+      const candidateIndexes = roleIndex === 0 ? [1] : roleIndex === 1 ? [2,3,4] : [roleIndex+1,roleIndex+2];
+      for (const [rank, candidateIndex] of candidateIndexes.entries()) {
+        const candidate = activePeople[candidateIndex % activePeople.length];
+        const readiness = roleIndex === 0 ? "ready_3_plus_years" : readyStates[(rank + roleIndex) % readyStates.length];
+        await client.query(
+          `insert into succession_candidates
+             (organization_id,critical_role_id,worker_id,readiness,is_emergency_backup,rank,skill_gaps,notes)
+           values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [organizationId, role.id, workerIds.get(candidate.id),
+            readiness, rank === 0 && roleIndex % 2 === 0,
+            rank + 1, ["Strategic planning"], "Build experience through a scoped stretch assignment."],
+        );
+        if (rank === 0) {
+          await client.query(
+            `insert into development_actions
+               (organization_id,worker_id,critical_role_id,action_type,title,due_date,status)
+             values ($1,$2,$3,'experience','Lead a cross-functional initiative','2027-03-31','planned')`,
+            [organizationId, workerIds.get(candidate.id), role.id],
+          );
+        }
+      }
+    }
+
+    const activeManagerIds = new Set(activePeople.flatMap((person) => person.managerId ? [person.managerId] : []));
+    let seriesIndex = 0;
+    for (const report of activePeople.filter((person) => person.managerId && activeManagerIds.has(person.managerId))) {
+      const series = await client.query<{ id: string }>(
+        `insert into one_on_one_series
+           (organization_id,manager_worker_id,report_worker_id,cadence_days,started_on)
+         values ($1,$2,$3,$4,'2026-01-05') returning id`,
+        [organizationId, workerIds.get(report.managerId!), workerIds.get(report.id), seriesIndex % 5 === 0 ? 7 : 14],
+      );
+      const seriesId = series.rows[0].id;
+      const cadenceDays = seriesIndex % 5 === 0 ? 7 : 14;
+      const latestMeetingDaysAgo = cadenceDays === 7
+        ? [3, 9, 21][seriesIndex % 3]
+        : [7, 18, 35][seriesIndex % 3];
+      for (const [meetingIndex, daysAgo] of [84, 56, latestMeetingDaysAgo].entries()) {
+        if (seriesIndex % 4 === 0 && meetingIndex === 2) continue;
+        const meetingDate = new Date(`${today}T00:00:00Z`);
+        meetingDate.setUTCDate(meetingDate.getUTCDate() - daysAgo);
+        const meeting = await client.query<{ id: string }>(
+          `insert into one_on_one_meetings
+             (organization_id,series_id,meeting_date,status,shared_notes,report_pulse)
+           values ($1,$2,$3,'held','Progress, blockers and next steps.',$4) returning id`,
+          [organizationId, seriesId, meetingDate.toISOString().slice(0,10), 3 + (seriesIndex % 3)],
+        );
+        await client.query(
+          `insert into one_on_one_agenda_items (organization_id,series_id,meeting_id,added_by,body,discussed)
+           values ($1,$2,$3,'manager','Review current priorities',true)`,
+          [organizationId, seriesId, meeting.rows[0].id],
+        );
+      }
+      await client.query(
+        `insert into one_on_one_agenda_items (organization_id,series_id,added_by,body)
+         values ($1,$2,'report','Discuss upcoming goals')`,
+        [organizationId, seriesId],
+      );
+      await client.query(
+        `insert into one_on_one_action_items (organization_id,series_id,owner,body,due_date,completed_at)
+         values ($1,$2,'report','Share project update',$3,$4)`,
+        [organizationId, seriesId, seriesIndex % 3 === 0 ? "2026-10-01" : "2026-12-01",
+          seriesIndex % 2 === 0 ? "2026-10-15T12:00:00Z" : null],
+      );
+      seriesIndex++;
     }
 
     for (const metric of Object.values(METRICS)) {

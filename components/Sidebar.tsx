@@ -9,7 +9,10 @@ const nav = [
   { href: "/integrations", label: "Integrations" },
   { href: "/documents", label: "Documents" },
   { href: "/onboarding", label: "Onboarding" },
+  { href: "/surveys", label: "Surveys" },
   { href: "/reviews", label: "Reviews" },
+  { href: "/one-on-ones", label: "1:1s" },
+  { href: "/succession", label: "Succession" },
 ];
 
 export function Sidebar() {
