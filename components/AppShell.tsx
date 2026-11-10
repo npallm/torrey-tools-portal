@@ -5,12 +5,14 @@ import { Sidebar } from "@/components/Sidebar";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const publicSurveyRoute = pathname.startsWith("/s/") || pathname.startsWith("/r/");
+  const publicLinkRoute = pathname.startsWith("/s/")
+    || pathname.startsWith("/r/")
+    || (pathname.startsWith("/approvals/") && pathname !== "/approvals/templates");
 
   return (
     <div className="flex min-h-screen">
-      {!publicSurveyRoute && <Sidebar />}
-      <main className={`flex-1 ${publicSurveyRoute ? "p-4 sm:p-8" : "p-8"}`}>
+      {!publicLinkRoute && <Sidebar />}
+      <main className={`flex-1 ${publicLinkRoute ? "p-4 sm:p-8" : "p-8"}`}>
         {children}
       </main>
     </div>

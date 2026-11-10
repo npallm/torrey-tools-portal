@@ -12,7 +12,7 @@ export default async function OutboxPage() {
     const messages = await getOutboxMessages();
     return (
       <div>
-        <PageHeader title="Outbox" subtitle="Queued survey invitations and manager score links." />
+          <PageHeader title="Outbox" subtitle="Queued survey and change-request approval messages." />
         <div className="space-y-3">
           {messages.map((message) => (
             <article key={message.id} className="rounded-lg border bg-white p-4">

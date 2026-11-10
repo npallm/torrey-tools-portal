@@ -14,6 +14,7 @@ import { MANAGER_QUESTION_BANK } from "../lib/surveys/managerQuestions";
 import { tenureBand } from "../lib/surveys/results";
 import { refreshManagerSurveySnapshots } from "../lib/server/surveys";
 import { proposedRating } from "../lib/talent/reviews";
+import { seedChangeRequests } from "../lib/seed/changeRequests";
 
 const cents = (amount: number) => Math.round(amount * 100);
 
@@ -189,11 +190,11 @@ export async function seedDemo(pool: Pool): Promise<void> {
     }
 
     const positionIds = new Map<string, string>();
-    for (const position of seedWorkforce.positions) {
+    for (const [positionIndex, position] of seedWorkforce.positions.entries()) {
       const result = await client.query<{ id: string }>(
         `insert into positions
-          (organization_id, job_profile_id, department_id, budgeted_fte, status, opened_on)
-         values ($1, $2, $3, 1, $4, $5)
+          (organization_id, job_profile_id, department_id, budgeted_fte, status, opened_on, position_code)
+         values ($1, $2, $3, 1, $4, $5, $6)
          returning id`,
         [
           organizationId,
@@ -201,10 +202,13 @@ export async function seedDemo(pool: Pool): Promise<void> {
           departmentIds.get(position.department),
           position.status.toLowerCase(),
           position.status === "Open" ? seedWorkforce.organization.asOfDate : null,
+          `P-${1001 + positionIndex}`,
         ],
       );
       positionIds.set(position.id, result.rows[0].id);
     }
+    const hrbpPositionId = positionIds.get("position-emp-026")!;
+    const vacantPositionId = positionIds.get("position-open-005")!;
 
     const workerIds = new Map<string, string>();
     const employmentPeriodIds = new Map<string, string>();
@@ -295,7 +299,6 @@ export async function seedDemo(pool: Pool): Promise<void> {
         );
       }
     }
-
     for (const person of people) {
       if (!person.terminationDate || !person.separationCategory) continue;
       await client.query(
@@ -555,10 +558,26 @@ export async function seedDemo(pool: Pool): Promise<void> {
           [organizationId, surveyId, invitationId, responseDate, index],
         );
         const managerNumber = Number(invitee.person.managerId!.slice(-3));
-        const managerMean: Record<number, number> = { 1: 4, 2: 3, 9: 5, 10: 3, 11: 5, 12: 3 };
-        const baseScore = managerMean[managerNumber] ?? 3 + (managerNumber % 2);
+        const categoryScores: Record<number, readonly number[]> = {
+          1: [5, 4, 4, 4],
+          2: [4, 4, 3, 4],
+          9: [5, 5, 4, 4],
+          10: [3, 3, 4, 3],
+          11: [4, 3, 4, 3],
+          12: [4, 5, 4, 5],
+          51: [2, 2, 3, 1],
+          52: [2, 3, 2, 2],
+          53: [3, 2, 2, 3],
+        };
+        const managerCategories = categoryScores[managerNumber] ?? [3, 3, 3, 3];
+        const itemOffsets = [-1, 0, 1, 0, 0];
         for (const [questionIndex, question] of questions.entries()) {
-          const value = Math.max(1, Math.min(5, baseScore + (questionIndex % 3) - 1));
+          const categoryScore = managerCategories[Math.floor(questionIndex / 5)];
+          const itemIndex = questionIndex % 5;
+          const offset = categoryScore === 1 || categoryScore === 5
+            ? 0
+            : itemOffsets[(itemIndex + managerNumber) % itemOffsets.length];
+          const value = categoryScore + offset;
           await client.query(
             `insert into survey_answers (response_id, question_id, numeric_value) values ($1,$2,$3)`,
             [response.rows[0].id, question.id, value],
@@ -797,6 +816,11 @@ export async function seedDemo(pool: Pool): Promise<void> {
       );
       seriesIndex++;
     }
+
+    await seedChangeRequests(client, organizationId, workerIds, {
+      hrbpPositionId,
+      vacantPositionId,
+    });
 
     for (const metric of Object.values(METRICS)) {
       await client.query(

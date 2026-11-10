@@ -66,6 +66,18 @@ The 9-box squeezes potential into one subjective axis. This model splits it out 
   - These sit next to the performance trend from the last two calibrated ratings, flight risk, skills and mobility.
 - **Development actions** follow 70-20-10: experience, exposure and education, linked to the target role.
 
+## Change-request approvals
+- **Chains:** each change request gets an approval chain of 1–6 steps, run in order. Each step names either a worker or a position (`positions.position_code`).
+- **Templates:** reusable chains live in `approval_chain_templates`, optionally one per change type. A request keeps its own copy in `change_request_approval_steps`, so editing a template never changes requests already in flight.
+- **Who can approve** (`lib/approvals/workflow.ts`):
+  - When a step becomes active, its eligible approvers are frozen in `eligible_worker_ids`: the named worker, or whoever currently holds the position.
+  - The submitter and the employee the request is about are never eligible.
+  - Approving moves the request to the next step. Rejecting requires a comment and skips the remaining steps.
+  - The submitter can withdraw the request.
+  - If the active step has no eligible approver (for example, the position is vacant), an admin can reassign it.
+- **Emails:** each eligible approver gets a unique `/approvals/<token>` link in an email whose subject is "X submitted a change request for Y". The body lists the current and requested values, the effective date, the reason, and the step number. The submitter is emailed when the final decision is made.
+- **Tracking:** every action is recorded in `change_request_events`. `/requests` shows each request's progress and timeline.
+
 ## Data flow (every displayed number)
 
 Every number on screen is computed on the server by the function listed below, from the stored inputs listed. Pages never redo the math.

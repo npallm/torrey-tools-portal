@@ -736,11 +736,16 @@ export async function getShareScores(shareToken: string) {
     const row = share.rows[0];
     if (!row) return null;
     await pool.query("update survey_result_shares set last_viewed_at = now() where id = $1", [row.id]);
-    const [scores, questions] = await Promise.all([
+    const [scores, questions, scoredManagers] = await Promise.all([
       scoreRowsForManager(pool, row.survey_id, row.manager_id),
       pool.query<{ id: string; prompt: string; category: string }>(
         `select id, prompt, dimension as category from survey_questions
          where survey_id = $1 order by position`,
+        [row.survey_id],
+      ),
+      pool.query<{ count: string }>(
+        `select count(*) as count from survey_manager_scores
+         where survey_id = $1 and scope = 'direct' and shown`,
         [row.survey_id],
       ),
     ]);
@@ -752,6 +757,7 @@ export async function getShareScores(shareToken: string) {
       managerName: row.name,
       scores,
       questions: questions.rows,
+      scoredManagerCount: Number(scoredManagers.rows[0]?.count ?? 0),
     };
   });
 }

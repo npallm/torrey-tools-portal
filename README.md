@@ -33,6 +33,12 @@ npm run dev
 
 The database scripts load `.env.local`; they do not have a built-in database URL. Analytics automatically uses sample data when `DATABASE_URL` is not set or Postgres is unavailable.
 
+### Change requests and approvals
+
+Employee change requests are stored in Postgres and can use a sequential approval chain of one to six people or positions. Maintain reusable chains at `/approvals/templates`; position approvers resolve to current holders when a request is submitted. Approvers receive a unique link, while the request page tracks decisions, comments, and the event timeline. Messages are queued in `/outbox` for review and delivery.
+
+Set `APP_BASE_URL` to the externally reachable origin before sending approval links outside local development. If unset, links use `http://localhost:3000`.
+
 Run the metric tests with:
 
 ```bash

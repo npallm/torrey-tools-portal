@@ -552,13 +552,14 @@ const positions: PositionRecord[] = [
     .map((person) => ({
       id: `position-${person.id}`,
       department: person.department,
-      title: titleByPersonId.get(person.id)!,
+      title: person.id === "emp-026" ? "HR Business Partner" : titleByPersonId.get(person.id)!,
       status: "Filled" as const,
     })),
   { id: "position-open-001", department: "Operations", title: "Operations Specialist", status: "Open" },
   { id: "position-open-002", department: "Client Services", title: "Client Services Associate", status: "Open" },
   { id: "position-open-003", department: "People", title: "HR Analyst", status: "Open" },
   { id: "position-open-004", department: "Technology", title: "Systems Administrator", status: "Open" },
+  { id: "position-open-005", department: "People", title: "Compensation Director", status: "Open" },
 ];
 
 const nonExemptPersonIds = new Set(["emp-003", "emp-004", "emp-014"]);
