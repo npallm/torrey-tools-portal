@@ -39,6 +39,7 @@ export function ApprovalTemplateEditor({
           positions={positions}
           initialSteps={template?.steps ?? []}
           fieldName="steps"
+          deferErrorsUntilInteraction
         />
         <div className="flex flex-wrap items-center gap-2">
           <button className="rounded bg-brand-600 px-4 py-2 text-sm font-semibold text-white">Save template</button>

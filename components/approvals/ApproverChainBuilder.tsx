@@ -11,20 +11,25 @@ export function ApproverChainBuilder({
   positions,
   initialSteps,
   fieldName = "approvers",
+  deferErrorsUntilInteraction = false,
 }: {
   people: PersonOption[];
   positions: PositionOption[];
   initialSteps: ApproverRef[];
   fieldName?: string;
+  deferErrorsUntilInteraction?: boolean;
 }) {
   const [steps, setSteps] = useState<ApproverRef[]>(initialSteps);
-  const error = validateChain(steps);
+  const [hasInteracted, setHasInteracted] = useState(false);
+  const error = deferErrorsUntilInteraction && !hasInteracted ? null : validateChain(steps);
 
   function update(index: number, next: ApproverRef) {
+    setHasInteracted(true);
     setSteps((current) => current.map((step, position) => position === index ? next : step));
   }
 
   function move(index: number, direction: -1 | 1) {
+    setHasInteracted(true);
     setSteps((current) => {
       const target = index + direction;
       if (target < 0 || target >= current.length) return current;
@@ -87,7 +92,7 @@ export function ApproverChainBuilder({
             <div className="flex items-center justify-end gap-1">
               <button type="button" onClick={() => move(index, -1)} disabled={index === 0} aria-label={`Move step ${index + 1} up`} className="rounded border px-2 py-1 text-sm disabled:opacity-40">↑</button>
               <button type="button" onClick={() => move(index, 1)} disabled={index === steps.length - 1} aria-label={`Move step ${index + 1} down`} className="rounded border px-2 py-1 text-sm disabled:opacity-40">↓</button>
-              <button type="button" onClick={() => setSteps((current) => current.filter((_, position) => position !== index))} aria-label={`Remove step ${index + 1}`} className="rounded border px-2 py-1 text-sm text-rose-700">Remove</button>
+              <button type="button" onClick={() => { setHasInteracted(true); setSteps((current) => current.filter((_, position) => position !== index)); }} aria-label={`Remove step ${index + 1}`} className="rounded border px-2 py-1 text-sm text-rose-700">Remove</button>
             </div>
           </div>
         ))}
@@ -95,7 +100,10 @@ export function ApproverChainBuilder({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <button
           type="button"
-          onClick={() => setSteps((current) => current.length >= 6 ? current : [...current, { kind: "worker", workerId: people[0]?.id ?? "" }])}
+          onClick={() => {
+            setHasInteracted(true);
+            setSteps((current) => current.length >= 6 ? current : [...current, { kind: "worker", workerId: people[0]?.id ?? "" }]);
+          }}
           disabled={steps.length >= 6}
           className="rounded border border-slate-300 px-3 py-1.5 text-sm disabled:opacity-40"
         >

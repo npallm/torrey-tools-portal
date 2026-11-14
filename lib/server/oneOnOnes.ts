@@ -152,7 +152,7 @@ export async function getOneOnOneSeries(seriesId: string) {
     );
     const row = seriesResult.rows[0];
     if (!row) return null;
-    const [meetings, agenda, actions] = await Promise.all([
+    const [meetings, agenda, meetingAgenda, actions] = await Promise.all([
       pool.query<{
         id: string;
         meeting_date: string;
@@ -179,6 +179,19 @@ export async function getOneOnOneSeries(seriesId: string) {
         `select id, added_by, body, discussed, created_at
          from one_on_one_agenda_items
          where series_id = $1 and organization_id = $2 and meeting_id is null
+         order by created_at`,
+        [seriesId, organizationId],
+      ),
+      pool.query<{
+        id: string;
+        meeting_id: string;
+        added_by: "manager" | "report";
+        body: string;
+        discussed: boolean;
+      }>(
+        `select id, meeting_id, added_by, body, discussed
+         from one_on_one_agenda_items
+         where series_id = $1 and organization_id = $2 and meeting_id is not null
          order by created_at`,
         [seriesId, organizationId],
       ),
@@ -218,7 +231,12 @@ export async function getOneOnOneSeries(seriesId: string) {
         ...action,
         status: actionItemStatus({ dueDate: action.due_date, completedAt: action.completed_at }, asOf),
       })),
-      meetings: meetings.rows,
+      meetings: meetings.rows.map((meeting) => ({
+        ...meeting,
+        agenda: meetingAgenda.rows
+          .filter((item) => item.meeting_id === meeting.id)
+          .map(({ id, added_by, body, discussed }) => ({ id, added_by, body, discussed })),
+      })),
     };
   });
 }
@@ -252,6 +270,7 @@ export async function addOneOnOneAgendaItem(input: {
   addedBy: "manager" | "report";
   body: string;
 }) {
+  if (!input.body.trim()) throw new Error("Agenda item text is required.");
   return withFeatureDatabase(async (pool) => {
     const organizationId = await demoOrganizationId(pool);
     const result = await pool.query<{ id: string }>(
@@ -259,9 +278,10 @@ export async function addOneOnOneAgendaItem(input: {
        select $1, s.id, $3, $4 from one_on_one_series s
        where s.id = $2 and s.organization_id = $1
        returning id`,
-      [organizationId, input.seriesId, input.addedBy, input.body.trim()],
+      [organizationId, input.seriesId, input.addedBy, input.body],
     );
     if (!result.rowCount) throw new Error("1:1 series not found.");
+    return result.rows[0].id;
   });
 }
 
@@ -351,6 +371,7 @@ export async function logOneOnOneMeeting(input: {
         [input.seriesId, meetingId, organizationId],
       );
       await client.query("commit");
+      return meetingId;
     } catch (error) {
       await client.query("rollback");
       throw error;

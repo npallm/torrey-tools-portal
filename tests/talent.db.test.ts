@@ -4,7 +4,13 @@ import { getPool } from "@/lib/db";
 import { managerSurveyResults } from "@/lib/surveys/managerScores";
 import type { SurveyInvitation, SurveyResponse } from "@/lib/surveys/types";
 import { getShareScores, submitManagerSurveyResponse } from "@/lib/server/surveys";
-import { getOneOnOneDashboard } from "@/lib/server/oneOnOnes";
+import {
+  addOneOnOneAgendaItem,
+  getOneOnOneDashboard,
+  getOneOnOneSeries,
+  logOneOnOneMeeting,
+  setAgendaDiscussed,
+} from "@/lib/server/oneOnOnes";
 import { getSuccessionDashboard } from "@/lib/server/succession";
 import { actionItemStatus, oneOnOneHealth } from "@/lib/talent/oneOnOnes";
 import { benchStrength, performanceTrend, riskBand, roleRiskScore } from "@/lib/talent/succession";
@@ -189,6 +195,49 @@ databaseDescribe("seeded talent database pipelines", () => {
     expect(result?.scores).toHaveLength(2);
     expect(result?.scores.every((row) => row.managerId === result.managerId)).toBe(true);
     expect(result?.scores.map((row) => row.scope).sort()).toEqual(["direct", "sup_org"]);
+  });
+
+  it("preserves agenda text and includes its discussed state in meeting history", async () => {
+    const seriesRow = await db().query<{ id: string }>(
+      `select id from one_on_one_series
+       limit 1`,
+    );
+    expect(seriesRow.rows[0]).toBeDefined();
+    const seriesId = seriesRow.rows[0].id;
+    let agendaItemId: string | null = null;
+    let meetingId: string | null = null;
+    try {
+      agendaItemId = await addOneOnOneAgendaItem({
+        seriesId,
+        addedBy: "manager",
+        body: "Q1 roadmap",
+      });
+      const stored = await db().query<{ body: string }>(
+        "select body from one_on_one_agenda_items where id = $1",
+        [agendaItemId],
+      );
+      expect(stored.rows[0].body).toBe("Q1 roadmap");
+      await setAgendaDiscussed({ seriesId, itemId: agendaItemId, discussed: true });
+      meetingId = await logOneOnOneMeeting({
+        seriesId,
+        meetingDate: "2026-01-02",
+        sharedNotes: "",
+        managerPrivateNotes: "",
+        reportPrivateNotes: "",
+        reportPulse: null,
+      });
+      const series = await getOneOnOneSeries(seriesId);
+      const meeting = series?.meetings.find((item) => item.id === meetingId);
+      expect(meeting?.agenda).toContainEqual({
+        id: agendaItemId,
+        added_by: "manager",
+        body: "Q1 roadmap",
+        discussed: true,
+      });
+    } finally {
+      if (agendaItemId) await db().query("delete from one_on_one_agenda_items where id = $1", [agendaItemId]);
+      if (meetingId) await db().query("delete from one_on_one_meetings where id = $1", [meetingId]);
+    }
   });
 
   it("persists open-cycle proposed ratings from raw manager responses and goals", async () => {

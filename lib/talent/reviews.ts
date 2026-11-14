@@ -5,6 +5,18 @@ export function weightedScore(items: { weight: number; rating: number | null }[]
   return w > 0 ? rated.reduce((a, i) => a + i.weight * i.rating!, 0) / w : null;
 }
 
+export const GOAL_STATUS_LABELS: Record<string, string> = {
+  not_started: "Not started",
+  on_track: "On track",
+  at_risk: "At risk",
+  off_track: "Off track",
+  done: "Done",
+};
+
+export function goalStatusLabel(status: string): string {
+  return GOAL_STATUS_LABELS[status] ?? status;
+}
+
 /** Goal attainment (%) = weight-averaged progress, each goal capped to 0–100. */
 export function goalAttainment(goals: { weight: number; progressPct: number }[]): number | null {
   const w = goals.reduce((a, g) => a + (g.weight > 0 ? g.weight : 0), 0);

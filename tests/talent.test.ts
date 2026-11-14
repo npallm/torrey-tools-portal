@@ -10,7 +10,7 @@ import {
   suggestedProbabilityOfLoss,
 } from "@/lib/talent/succession";
 import { actionItemStatus, oneOnOneHealth } from "@/lib/talent/oneOnOnes";
-import { calibrationShift, goalAttainment, proposedRating, ratingDistribution, selfManagerGap, weightedScore } from "@/lib/talent/reviews";
+import { calibrationShift, GOAL_STATUS_LABELS, goalAttainment, proposedRating, ratingDistribution, selfManagerGap, weightedScore } from "@/lib/talent/reviews";
 
 describe("succession", () => {
   it("scores role risk and bench strength", () => {
@@ -60,6 +60,16 @@ describe("1:1s", () => {
 });
 
 describe("reviews", () => {
+  it("maps goal status codes to readable labels", () => {
+    expect(GOAL_STATUS_LABELS).toEqual({
+      not_started: "Not started",
+      on_track: "On track",
+      at_risk: "At risk",
+      off_track: "Off track",
+      done: "Done",
+    });
+  });
+
   it("computes weighted scores, goals, gaps and calibration", () => {
     expect(weightedScore([{ weight: 2, rating: 4 }, { weight: 1, rating: 1 }, { weight: 1, rating: null }])).toBe(3);
     expect(weightedScore([{ weight: 1, rating: null }])).toBeNull();
