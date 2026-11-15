@@ -382,12 +382,78 @@ const additionalPeople: AdditionalPerson[] = [
   },
 ];
 
+const newHireNames = [
+  "Avery Morgan", "Riley Patel", "Casey Brooks", "Morgan Diaz", "Jamie Sullivan",
+  "Cameron Foster", "Quinn James", "Taylor Kim", "Rowan Carter", "Skyler James",
+  "Alexis Rivera", "Reese Miller", "Parker Singh", "Drew Evans", "Emerson Clark",
+  "Finley Ross", "Harper Nguyen", "Kendall Ward", "Logan Price", "Micah Bell",
+  "Noah Reed", "Oakley Cruz", "Payton Bell", "Robin Scott", "Sage Perry",
+  "Shiloh Murphy", "Tatum Reed", "Val Morgan", "Winter Flores", "Zion Cole",
+  "Blake Young", "Elliot Gray", "Frankie Lewis", "Gray Ellis", "Indigo James",
+  "Jules Martin",
+];
+const newHireDepartments = [
+  ...Array(5).fill("People"),
+  ...Array(4).fill("Operations"),
+  ...Array(6).fill("Finance"),
+  ...Array(5).fill("Technology"),
+  ...Array(6).fill("Client Services"),
+  "Operations", "Finance", "Technology",
+  ...Array(2).fill("Operations"),
+  ...Array(2).fill("Finance"),
+  ...Array(3).fill("Technology"),
+];
+const newHireManagers = [
+  ...Array(5).fill("emp-002"),
+  ...Array(4).fill("emp-009"),
+  ...Array(6).fill("emp-010"),
+  ...Array(5).fill("emp-011"),
+  ...Array(6).fill("emp-012"),
+  "emp-009", "emp-010", "emp-011",
+  ...Array(2).fill("emp-051"),
+  ...Array(2).fill("emp-052"),
+  ...Array(3).fill("emp-053"),
+];
+const generatedPeople: AdditionalPerson[] = newHireNames.map((name, index) => {
+  const id = `emp-${String(index + 25).padStart(3, "0")}`;
+  const managerId = newHireManagers[index];
+  const isTeamLead = [26, 27, 28].includes(index);
+  const title = isTeamLead
+    ? `Team Lead ${newHireDepartments[index]} ${index + 1}`
+    : `${newHireDepartments[index]} ${["Specialist", "Analyst", "Associate"][index % 3]} ${index + 1}`;
+  const midpoint = 62000 + (index % 9) * 4500;
+  const terminationDate = new Map([
+    [5, "2026-07-31"],
+    [9, "2026-08-31"],
+    [15, "2026-10-15"],
+  ]).get(index) ?? null;
+  return {
+    id,
+    name,
+    title,
+    department: newHireDepartments[index],
+    location: ["San Diego, CA", "Remote", "Carlsbad, CA"][index % 3],
+    managerId,
+    workerType: "Employee",
+    fte: 1,
+    hireDate: `202${index % 7}-0${(index % 9) + 1}-15`,
+    terminationDate,
+    separationCategory: terminationDate ? "Quit" : null,
+    regrettable: terminationDate ? false : null,
+    annualSalary: midpoint,
+    payRangeMin: Math.round(midpoint * 0.8),
+    payRangeMid: midpoint,
+    payRangeMax: Math.round(midpoint * 1.2),
+  };
+});
+
 const titleByPersonId = new Map([
   ...employees.map((person) => [person.id, person.title] as const),
   ...additionalPeople.map((person) => [person.id, person.title] as const),
+  ...generatedPeople.map((person) => [person.id, person.title] as const),
 ]);
 
-const people = [...basePeople, ...additionalPeople];
+const people = [...basePeople, ...additionalPeople, ...generatedPeople];
 
 const monthStarts = Array.from({ length: 23 }, (_, index) => {
   const year = 2025 + Math.floor(index / 12);
@@ -418,7 +484,7 @@ function makeAbsences(count: number, planned: boolean): AbsenceRecord[] {
   });
 }
 
-const absences = [...makeAbsences(40, false), ...makeAbsences(12, true)];
+const absences = [...makeAbsences(100, false), ...makeAbsences(30, true)];
 
 const extraPto: PtoRecord[] = [
   { id: "pto-005", personId: "emp-013", type: "Vacation", startDate: "2025-03-10", days: 3, status: "Approved" },
@@ -486,13 +552,14 @@ const positions: PositionRecord[] = [
     .map((person) => ({
       id: `position-${person.id}`,
       department: person.department,
-      title: titleByPersonId.get(person.id)!,
+      title: person.id === "emp-026" ? "HR Business Partner" : titleByPersonId.get(person.id)!,
       status: "Filled" as const,
     })),
   { id: "position-open-001", department: "Operations", title: "Operations Specialist", status: "Open" },
   { id: "position-open-002", department: "Client Services", title: "Client Services Associate", status: "Open" },
   { id: "position-open-003", department: "People", title: "HR Analyst", status: "Open" },
   { id: "position-open-004", department: "Technology", title: "Systems Administrator", status: "Open" },
+  { id: "position-open-005", department: "People", title: "Compensation Director", status: "Open" },
 ];
 
 const nonExemptPersonIds = new Set(["emp-003", "emp-004", "emp-014"]);
