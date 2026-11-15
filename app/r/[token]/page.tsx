@@ -14,7 +14,7 @@ export default async function ManagerSharePage({ params }: { params: Promise<{ t
     return (
       <div>
         <PageHeader title={share.title} subtitle={`Results for ${share.managerName}`} />
-        <ManagerShareResults token={token} initialData={share} />
+        <ManagerShareResults key={`${token}:${share.status}`} token={token} initialData={share} />
       </div>
     );
   } catch (error) {
