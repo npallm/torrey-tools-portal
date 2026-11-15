@@ -105,4 +105,26 @@ describe("managerSurveyResults", () => {
     expect(vp.respondents).toBe(18);
     expect(vp.overall).toBeCloseTo((5 * 4 + 6 * 2 + 2 * 1 + 5 * 5) / 18, 10);
   });
+
+  it("hides a parent total when multiple shown sibling pools isolate a risky residual", () => {
+    const data = merge(
+      team(["P"], 1, [2, 2, 2]),
+      team(["A", "P"], 5, [4, 4, 4]),
+      team(["a1", "A", "P"], 3, [2, 2, 2]),
+      team(["a2", "A", "P"], 3, [3, 3, 3]),
+      team(["B", "P"], 5, [4, 4, 4]),
+      team(["b1", "B", "P"], 3, [2, 2, 2]),
+      team(["b2", "B", "P"], 3, [3, 3, 3]),
+    );
+    const result = managerSurveyResults({
+      questions,
+      ...data,
+      k: 5,
+      managerIds: ["P", "A", "B", "a1", "a2", "b1", "b2"],
+    });
+    const shown = Object.fromEntries(result.supOrgs.map((row) => [row.leaderId, row.shown]));
+    expect(shown.P).toBe(false);
+    expect(shown.A).toBe(true);
+    expect(shown.B).toBe(true);
+  });
 });

@@ -116,20 +116,51 @@ export function managerSurveyResults(input: ManagerSurveyInput): ManagerSurveyRe
   const risky = (n: number) => n > 0 && n < k;
 
   const shown = new Set(input.managerIds.filter((l) => members.get(l)!.length >= k && !risky(pool.get(l)!.size)));
+  const memberIds = new Map(
+    input.managerIds.map((leaderId) => [
+      leaderId,
+      new Set(members.get(leaderId)!.map((response) => response.id)),
+    ]),
+  );
   let changed = true;
   while (changed) {
     changed = false;
     for (const outer of [...shown]) {
       for (const inner of [...shown]) {
         if (outer === inner || !shown.has(outer) || !shown.has(inner)) continue;
-        const innerIds = new Set(members.get(inner)!.map((r) => r.id));
-        const nested = [...innerIds].every((id) => members.get(outer)!.some((r) => r.id === id));
+        const innerIds = memberIds.get(inner)!;
+        const nested = [...innerIds].every((id) => memberIds.get(outer)!.has(id));
         if (!nested) continue;
         const diff = [...pool.get(outer)!].filter((id) => !pool.get(inner)!.has(id)).length;
         if (risky(diff)) {
           shown.delete(innerIds.size <= members.get(outer)!.length ? inner : outer);
           changed = true;
         }
+      }
+    }
+    for (const outer of [...shown]) {
+      const outerMembers = memberIds.get(outer)!;
+      const nestedShown = [...shown].filter(
+        (inner) =>
+          inner !== outer &&
+          [...memberIds.get(inner)!].every((id) => outerMembers.has(id)),
+      );
+      const maximalNested = nestedShown.filter((inner) => {
+        const innerMembers = memberIds.get(inner)!;
+        return !nestedShown.some((other) => {
+          if (other === inner) return false;
+          const otherMembers = memberIds.get(other)!;
+          return (
+            innerMembers.size < otherMembers.size &&
+            [...innerMembers].every((id) => otherMembers.has(id))
+          );
+        });
+      });
+      const nestedPools = new Set(maximalNested.flatMap((inner) => [...pool.get(inner)!]));
+      const residual = [...pool.get(outer)!].filter((id) => !nestedPools.has(id)).length;
+      if (risky(residual)) {
+        shown.delete(outer);
+        changed = true;
       }
     }
   }
