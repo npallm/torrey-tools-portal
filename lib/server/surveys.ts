@@ -579,12 +579,14 @@ export async function getSurveyFormByToken(inviteToken: string) {
       invitation_id: string;
       survey_id: string;
       status: "draft" | "open" | "closed";
+      deadline_passed: boolean;
       submitted_at: string | null;
       title: string;
       description: string | null;
     }>(
       `select i.id as invitation_id, i.survey_id, i.submitted_at,
-              s.status, s.title, s.description
+              s.status, s.title, s.description,
+              coalesce(s.closes_at <= clock_timestamp(), false) as deadline_passed
        from survey_invitations i join surveys s on s.id = i.survey_id
        where i.token = $1 and s.survey_type = 'manager_effectiveness'`,
       [inviteToken],
@@ -597,7 +599,9 @@ export async function getSurveyFormByToken(inviteToken: string) {
       [invitation.invitation_id],
     );
     if (invitation.submitted_at) return { state: "submitted" as const, title: invitation.title };
-    if (invitation.status !== "open") return { state: "closed" as const, title: invitation.title };
+    if (invitation.status !== "open" || invitation.deadline_passed) {
+      return { state: "closed" as const, title: invitation.title };
+    }
     const questions = await pool.query<{
       id: string;
       prompt: string;
@@ -636,12 +640,17 @@ export async function submitManagerSurveyResponse(input: {
         `select i.id, i.survey_id, i.organization_id, s.status, i.submitted_at
          from survey_invitations i join surveys s on s.id = i.survey_id
          where i.token = $1 and s.survey_type = 'manager_effectiveness'
-         for update of i`,
+         for update of i, s`,
         [input.token],
       );
       const invitation = invitationResult.rows[0];
       if (!invitation) throw new Error("This survey link is not valid.");
       if (invitation.status !== "open") throw new Error("This survey is closed.");
+      const deadline = await client.query<{ passed: boolean }>(
+        "select closes_at <= clock_timestamp() as passed from surveys where id = $1",
+        [invitation.survey_id],
+      );
+      if (deadline.rows[0]?.passed) throw new Error("This survey is closed.");
       if (invitation.submitted_at) throw new Error("A response has already been submitted for this link.");
       const questions = await client.query<{ id: string }>(
         `select id from survey_questions where survey_id = $1 and organization_id = $2`,
