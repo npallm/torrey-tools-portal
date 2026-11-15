@@ -277,15 +277,19 @@ export async function getCriticalRoleDetail(roleId: string) {
       pool.query<{
         id: string;
         worker_id: string;
+        worker_name: string;
         action_type: "experience" | "exposure" | "education";
         title: string;
         due_date: string | null;
         status: string;
       }>(
-        `select id, worker_id, action_type, title, due_date, status
-         from development_actions
-         where critical_role_id = $1 and organization_id = $2
-         order by due_date nulls last, created_at`,
+        `select a.id, a.worker_id,
+                coalesce(w.preferred_name, w.first_name) || ' ' || w.last_name as worker_name,
+                a.action_type, a.title, a.due_date, a.status
+         from development_actions a
+         join workers w on w.id = a.worker_id
+         where a.critical_role_id = $1 and a.organization_id = $2
+         order by a.due_date nulls last, a.created_at`,
         [roleId, organizationId],
       ),
     ]);
@@ -326,6 +330,15 @@ export async function getCriticalRoleDetail(roleId: string) {
             dueDate: action.due_date,
             status: action.status,
           })),
+      })),
+      developmentActions: actions.rows.map((action) => ({
+        id: action.id,
+        workerId: action.worker_id,
+        workerName: action.worker_name,
+        type: action.action_type,
+        title: action.title,
+        dueDate: action.due_date,
+        status: action.status,
       })),
       people,
     };
