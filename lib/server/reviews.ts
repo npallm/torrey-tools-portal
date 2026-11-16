@@ -180,14 +180,14 @@ export async function saveReviewTemplate(input: {
         const updatedScale = await client.query(
           `update rating_scales set name = $3, points = $4
            where id = $1 and organization_id = $2`,
-          [scaleId, organizationId, input.scaleName, input.ratingPoints],
+          [scaleId, organizationId, input.scaleName, JSON.stringify(input.ratingPoints)],
         );
         if (!updatedScale.rowCount) throw new Error("Rating scale not found.");
       } else {
         const scaleResult = await client.query<{ id: string }>(
           `insert into rating_scales (organization_id, name, points)
            values ($1, $2, $3) returning id`,
-          [organizationId, input.scaleName, input.ratingPoints],
+          [organizationId, input.scaleName, JSON.stringify(input.ratingPoints)],
         );
         scaleId = scaleResult.rows[0].id;
       }
@@ -673,6 +673,10 @@ async function updateProposedRating(
   organizationId: string,
   assignment: { subject_worker_id: string; cycle_id: string; template_id: string },
 ) {
+  await client.query(
+    "select pg_advisory_xact_lock(hashtext($1 || ':' || $2))",
+    [assignment.cycle_id, assignment.subject_worker_id],
+  );
   const [template, items, goals] = await Promise.all([
     client.query<{
       include_goals: boolean;

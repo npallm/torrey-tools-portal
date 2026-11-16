@@ -3,7 +3,8 @@ import type { Pool } from "pg";
 import { getPool } from "@/lib/db";
 import { managerSurveyResults } from "@/lib/surveys/managerScores";
 import type { SurveyInvitation, SurveyResponse } from "@/lib/surveys/types";
-import { getShareScores, submitManagerSurveyResponse } from "@/lib/server/surveys";
+import { saveReviewTemplate } from "@/lib/server/reviews";
+import { getShareScores, getSurveyFormByToken, submitManagerSurveyResponse } from "@/lib/server/surveys";
 import {
   addOneOnOneAgendaItem,
   getOneOnOneDashboard,
@@ -129,6 +130,81 @@ databaseDescribe("seeded talent database pipelines", () => {
           }
         }
       }
+    }
+  });
+
+  it("round-trips rating scale JSONB when creating and updating a review template", async () => {
+    const points = [
+      { value: 1, label: "Needs improvement", description: "Below expectations" },
+      { value: 2, label: "Meets expectations", description: "Consistently meets expectations" },
+    ];
+    const updatedPoints = [
+      ...points,
+      { value: 3, label: "Exceeds expectations", description: "Frequently exceeds expectations" },
+    ];
+    let templateId: string | null = null;
+    let scaleId: string | null = null;
+    try {
+      templateId = await saveReviewTemplate({
+        name: "JSONB round-trip test",
+        description: "",
+        scaleName: "JSONB round-trip scale",
+        ratingPoints: points,
+        includeGoals: false,
+        goalsWeight: 0,
+        items: [],
+      });
+      const scale = await db().query<{ id: string }>(
+        "select rating_scale_id as id from review_templates where id = $1",
+        [templateId],
+      );
+      scaleId = scale.rows[0].id;
+      await saveReviewTemplate({
+        id: templateId,
+        name: "JSONB round-trip test updated",
+        description: "",
+        scaleId,
+        scaleName: "JSONB round-trip scale updated",
+        ratingPoints: updatedPoints,
+        includeGoals: false,
+        goalsWeight: 0,
+        items: [],
+      });
+      const stored = await db().query<{ points: typeof updatedPoints }>(
+        "select points from rating_scales where id = $1",
+        [scaleId],
+      );
+      expect(stored.rows[0].points).toEqual(updatedPoints);
+    } finally {
+      if (templateId) await db().query("delete from review_templates where id = $1", [templateId]);
+      if (scaleId) await db().query("delete from rating_scales where id = $1", [scaleId]);
+    }
+  });
+
+  it("closes an open survey form and rejects submissions after its deadline", async () => {
+    const survey = await db().query<{ id: string; closes_at: Date | null }>(
+      "select id, closes_at from surveys where title = 'Q4 Manager Pulse' and status = 'open'",
+    );
+    const token = await db().query<{ token: string }>(
+      `select i.token from survey_invitations i
+       where i.survey_id = $1 and i.submitted_at is null
+       order by i.id limit 1`,
+      [survey.rows[0].id],
+    );
+    try {
+      await db().query(
+        "update surveys set closes_at = clock_timestamp() - interval '1 minute' where id = $1",
+        [survey.rows[0].id],
+      );
+      expect(await getSurveyFormByToken(token.rows[0].token)).toMatchObject({ state: "closed" });
+      await expect(
+        submitManagerSurveyResponse({ token: token.rows[0].token, answers: [] }),
+      ).rejects.toThrow("This survey is closed.");
+    } finally {
+      await db().query("update surveys set closes_at = $2 where id = $1", [
+        survey.rows[0].id,
+        survey.rows[0].closes_at,
+      ]);
     }
   });
 

@@ -21,7 +21,7 @@ export default async function SurveyDetailPage({ params }: { params: Promise<{ i
           {survey.status === "open" && <form action={closeSurveyAction}><input type="hidden" name="surveyId" value={survey.id} /><button className="rounded border bg-white px-4 py-2 text-sm">Close survey</button></form>}
           <Link className="rounded border bg-white px-4 py-2 text-sm" href="/outbox">Invitation outbox</Link>
         </div>
-        <ManagerSurveyResults initialData={survey} />
+        <ManagerSurveyResults key={`${survey.id}:${survey.status}`} initialData={survey} />
         <section className="mt-8 rounded-lg border bg-white p-4">
           <h2 className="font-semibold">Manager share links</h2>
           <ul className="mt-3 divide-y text-sm">
