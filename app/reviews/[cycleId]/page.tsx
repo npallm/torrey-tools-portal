@@ -8,6 +8,7 @@ import { isDatabaseRequiredError } from "@/lib/server/common";
 import { getActivePeople } from "@/lib/server/org";
 import { getReviewCycleDetail } from "@/lib/server/reviews";
 import { GOAL_STATUS_LABELS } from "@/lib/talent/reviews";
+import { requireRole } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,7 @@ export default async function ReviewCyclePage({
   params: Promise<{ cycleId: string }>;
   searchParams: Promise<{ tab?: string; department?: string; supOrg?: string }>;
 }) {
+  await requireRole("client_admin", "consultant");
   const [{ cycleId }, query] = await Promise.all([params, searchParams]);
   try {
     const [detail, people] = await Promise.all([getReviewCycleDetail(cycleId), getActivePeople()]);

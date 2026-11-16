@@ -4,6 +4,7 @@ import { DatabaseNotice } from "@/components/DatabaseNotice";
 import { PageHeader } from "@/components/PageHeader";
 import { isDatabaseRequiredError } from "@/lib/server/common";
 import { getApprovalTemplates, getChangeRequestFormData } from "@/lib/server/changeRequests";
+import { requireRole } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +13,7 @@ export default async function ApprovalTemplatesPage({
 }: {
   searchParams: Promise<{ error?: string | string[]; saved?: string | string[]; archived?: string | string[] }>;
 }) {
+  await requireRole("client_admin", "consultant");
   const query = await searchParams;
   const error = typeof query.error === "string" ? query.error : null;
   const saved = typeof query.saved === "string";

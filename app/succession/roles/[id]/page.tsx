@@ -4,6 +4,7 @@ import { addCandidateAction, addDevelopmentActionAction, removeCandidateAction, 
 import { isDatabaseRequiredError } from "@/lib/server/common";
 import { getCriticalRoleDetail } from "@/lib/server/succession";
 import { READINESS_LABELS } from "@/lib/talent/succession";
+import { requireRole } from "@/lib/auth/session";
 
 const actionTypeLabels = {
   experience: "Experience",
@@ -20,6 +21,7 @@ const actionStatusLabels: Record<string, string> = {
 export const dynamic="force-dynamic";
 
 export default async function CriticalRolePage({params}:{params:Promise<{id:string}>}){
+  await requireRole("client_admin", "consultant");
   const {id}=await params;
   try{
     const role=await getCriticalRoleDetail(id); if(!role)return <p>Critical role not found.</p>;

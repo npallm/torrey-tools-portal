@@ -3,10 +3,12 @@ import { PageHeader } from "@/components/PageHeader";
 import { DatabaseNotice } from "@/components/DatabaseNotice";
 import { isDatabaseRequiredError } from "@/lib/server/common";
 import { getSurveys } from "@/lib/server/surveys";
+import { requireRole } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
 export default async function SurveysPage() {
+  await requireRole("client_admin", "consultant");
   try {
     const surveys = await getSurveys();
     return (

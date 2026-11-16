@@ -32,6 +32,57 @@ const token = () => randomBytes(24).toString("base64url");
 const emailFallback = (employeeNumber: string | null, workerId: string) =>
   employeeNumber ? `${employeeNumber}@example.invalid` : `${workerId}@example.invalid`;
 
+async function closeLockedManagerSurvey(client: PoolClient, organizationId: string, surveyId: string) {
+  const survey = await client.query<{ status: "draft" | "open" | "closed" }>(
+    `select status from surveys
+     where id = $1 and organization_id = $2 and survey_type = 'manager_effectiveness'
+     for update`,
+    [surveyId, organizationId],
+  );
+  if (survey.rows[0]?.status !== "open") return false;
+  await client.query(
+    `update surveys set status = 'closed', closes_at = coalesce(closes_at, now())
+     where id = $1 and organization_id = $2`,
+    [surveyId, organizationId],
+  );
+  await refreshManagerSurveySnapshots(client, organizationId, surveyId);
+  return true;
+}
+
+export async function closeExpiredSurveys(client: PoolClient, organizationId: string) {
+  const expired = await client.query<{ id: string }>(
+    `select id from surveys
+     where organization_id = $1 and survey_type = 'manager_effectiveness'
+       and status = 'open' and closes_at <= now()
+     order by closes_at, id
+     for update`,
+    [organizationId],
+  );
+  for (const survey of expired.rows) {
+    await closeLockedManagerSurvey(client, organizationId, survey.id);
+  }
+}
+
+async function withExpiredSurveysClosed<T>(
+  pool: Pool,
+  load: (client: PoolClient, organizationId: string) => Promise<T>,
+) {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const organizationId = await demoOrganizationId(client);
+    await closeExpiredSurveys(client, organizationId);
+    const result = await load(client, organizationId);
+    await client.query("commit");
+    return result;
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function getQuestionBank(): Promise<QuestionBankItem[]> {
   return withFeatureDatabase(async (pool) => {
     const organizationId = await demoOrganizationId(pool);
@@ -131,9 +182,8 @@ export async function createManagerSurvey(input: {
 }
 
 export async function getSurveys() {
-  return withFeatureDatabase(async (pool) => {
-    const organizationId = await demoOrganizationId(pool);
-    const result = await pool.query<{
+  return withFeatureDatabase((pool) => withExpiredSurveysClosed(pool, async (client, organizationId) => {
+    const result = await client.query<{
       id: string;
       title: string;
       description: string | null;
@@ -173,13 +223,12 @@ export async function getSurveys() {
         responseRate: invited ? (responded / invited) * 100 : null,
       };
     });
-  });
+  }));
 }
 
 export async function getSurvey(id: string) {
-  return withFeatureDatabase(async (pool) => {
-    const organizationId = await demoOrganizationId(pool);
-    const surveyResult = await pool.query<{
+  return withFeatureDatabase((pool) => withExpiredSurveysClosed(pool, async (client, organizationId) => {
+    const surveyResult = await client.query<{
       id: string;
       title: string;
       description: string | null;
@@ -202,14 +251,14 @@ export async function getSurvey(id: string) {
     );
     const survey = surveyResult.rows[0];
     if (!survey) return null;
-    const [people, questions, directResult, supResult, shares] = await Promise.all([
+    const [people, questions, directResult, supResult, shares, departmentCounts] = await Promise.all([
       getActivePeople(),
-      pool.query<{ id: string; prompt: string; category: string; position: number }>(
+      client.query<{ id: string; prompt: string; category: string; position: number }>(
         `select id, prompt, dimension as category, position
          from survey_questions where survey_id = $1 order by position`,
         [id],
       ),
-      pool.query<{
+      client.query<{
         manager_worker_id: string;
         name: string;
         shown: boolean;
@@ -228,7 +277,7 @@ export async function getSurvey(id: string) {
          order by ss.rank nulls last, name`,
         [id],
       ),
-      pool.query<{
+      client.query<{
         manager_worker_id: string;
         name: string;
         shown: boolean;
@@ -246,7 +295,7 @@ export async function getSurvey(id: string) {
          order by ss.shown desc, ss.overall_score desc nulls last, name`,
         [id],
       ),
-      pool.query<{
+      client.query<{
         id: string;
         token: string;
         scope_sup_org_leader_id: string | null;
@@ -257,12 +306,22 @@ export async function getSurvey(id: string) {
                 coalesce(w.preferred_name, w.first_name) || ' ' || w.last_name as name
          from survey_result_shares s
          left join workers w on w.id = s.scope_sup_org_leader_id
-         where s.survey_id = $1 order by name nulls last`,
-        [id],
+         where s.survey_id = $1 and s.organization_id = $2 order by name nulls last`,
+        [id, organizationId],
+      ),
+      client.query<{ department: string; invited: string; responded: string }>(
+        `select coalesce(i.department, 'Unknown') as department,
+                count(*) as invited,
+                count(*) filter (where i.submitted_at is not null) as responded
+         from survey_invitations i
+         where i.survey_id = $1 and i.organization_id = $2
+         group by coalesce(i.department, 'Unknown')
+         order by department`,
+        [id, organizationId],
       ),
     ]);
     const personById = new Map(people.map((person) => [person.id, person]));
-    const direct = directResult.rows.map((row) => ({
+    const direct = survey.status === "closed" ? directResult.rows.map((row) => ({
       managerId: row.manager_worker_id,
       name: row.name,
       division: personById.get(row.manager_worker_id)?.division ?? null,
@@ -273,8 +332,8 @@ export async function getSurvey(id: string) {
       rank: row.shown ? row.rank : null,
       categories: row.shown ? row.category_scores : null,
       items: row.shown ? row.item_scores : null,
-    }));
-      const supOrgs = supResult.rows.map((row) => {
+    })) : [];
+    const supOrgs = survey.status === "closed" ? supResult.rows.map((row) => {
       const person = personById.get(row.manager_worker_id);
       return {
         managerId: row.manager_worker_id,
@@ -288,7 +347,7 @@ export async function getSurvey(id: string) {
         categories: row.shown ? row.category_scores : null,
         items: row.shown ? row.item_scores : null,
       };
-    });
+    }) : [];
     const topLeader = people.find((person) => person.managerId === null);
     return {
       id: survey.id,
@@ -304,10 +363,21 @@ export async function getSurvey(id: string) {
       responseRate: Number(survey.invited) ? (Number(survey.responded) / Number(survey.invited)) * 100 : null,
       managersScored: direct.filter((row) => row.shown).length,
       managerCount: direct.length,
-      questions: questions.rows,
+      questions: survey.status === "closed" ? questions.rows : [],
       direct,
       supOrgs,
       companyAverage: topLeader ? supOrgs.find((row) => row.managerId === topLeader.id) ?? null : null,
+      departmentResponses: departmentCounts.rows.map((row) => {
+        const invited = Number(row.invited);
+        const responded = Number(row.responded);
+        return {
+          department: row.department,
+          suppressed: invited < 5,
+          invited: invited < 5 ? null : invited,
+          responded: invited < 5 ? null : responded,
+          responseRate: invited < 5 ? null : (responded / invited) * 100,
+        };
+      }),
       shares: shares.rows.map((row) => ({
         id: row.id,
         token: row.token,
@@ -317,7 +387,7 @@ export async function getSurvey(id: string) {
         path: `/r/${row.token}`,
       })),
     };
-  });
+  }));
 }
 
 export async function launchManagerSurvey(surveyId: string) {
@@ -417,7 +487,6 @@ export async function launchManagerSurvey(surveyId: string) {
          where id = $1 and organization_id = $2`,
         [surveyId, organizationId],
       );
-      await refreshManagerSurveySnapshots(client, organizationId, surveyId);
       await client.query("commit");
       return { invited: invitees.length, managers: managerReportCounts.size };
     } catch (error) {
@@ -435,13 +504,9 @@ export async function closeManagerSurvey(surveyId: string) {
     try {
       await client.query("begin");
       const organizationId = await demoOrganizationId(client);
-      const result = await client.query(
-        `update surveys set status = 'closed', closes_at = coalesce(closes_at, now())
-         where id = $1 and organization_id = $2 and status = 'open'`,
-        [surveyId, organizationId],
-      );
-      if (!result.rowCount) throw new Error("Only open surveys can be closed.");
-      await refreshManagerSurveySnapshots(client, organizationId, surveyId);
+      if (!await closeLockedManagerSurvey(client, organizationId, surveyId)) {
+        throw new Error("Only open surveys can be closed.");
+      }
       await client.query("commit");
     } catch (error) {
       await client.query("rollback");
@@ -574,35 +639,37 @@ export async function refreshManagerSurveySnapshots(
 }
 
 export async function getSurveyFormByToken(inviteToken: string) {
-  return withFeatureDatabase(async (pool) => {
-    const result = await pool.query<{
+  return withFeatureDatabase((pool) => withExpiredSurveysClosed(pool, async (client, organizationId) => {
+    const result = await client.query<{
       invitation_id: string;
       survey_id: string;
+      worker_id: string;
       status: "draft" | "open" | "closed";
       deadline_passed: boolean;
       submitted_at: string | null;
       title: string;
       description: string | null;
     }>(
-      `select i.id as invitation_id, i.survey_id, i.submitted_at,
+      `select i.id as invitation_id, i.survey_id, i.worker_id, i.submitted_at,
               s.status, s.title, s.description,
               coalesce(s.closes_at <= clock_timestamp(), false) as deadline_passed
        from survey_invitations i join surveys s on s.id = i.survey_id
-       where i.token = $1 and s.survey_type = 'manager_effectiveness'`,
-      [inviteToken],
+       where i.token = $1 and i.organization_id = $2
+         and s.organization_id = $2 and s.survey_type = 'manager_effectiveness'`,
+      [inviteToken, organizationId],
     );
     const invitation = result.rows[0];
     if (!invitation) return { state: "unknown" as const };
-    await pool.query(
+    await client.query(
       `update survey_invitations set opened_at = coalesce(opened_at, now())
        where id = $1`,
       [invitation.invitation_id],
     );
-    if (invitation.submitted_at) return { state: "submitted" as const, title: invitation.title };
+    if (invitation.submitted_at) return { state: "submitted" as const, title: invitation.title, workerId: invitation.worker_id };
     if (invitation.status !== "open" || invitation.deadline_passed) {
-      return { state: "closed" as const, title: invitation.title };
+      return { state: "closed" as const, title: invitation.title, workerId: invitation.worker_id };
     }
-    const questions = await pool.query<{
+    const questions = await client.query<{
       id: string;
       prompt: string;
       category: string;
@@ -615,36 +682,44 @@ export async function getSurveyFormByToken(inviteToken: string) {
     return {
       state: "open" as const,
       invitationId: invitation.invitation_id,
+      workerId: invitation.worker_id,
       title: invitation.title,
       description: invitation.description,
       questions: questions.rows,
     };
-  });
+  }));
 }
 
 export async function submitManagerSurveyResponse(input: {
   token: string;
   answers: { questionId: string; value: number }[];
+  viewerWorkerId?: string | null;
 }) {
   return withFeatureDatabase(async (pool) => {
     const client = await pool.connect();
     try {
       await client.query("begin");
+      await closeExpiredSurveys(client, await demoOrganizationId(client));
       const invitationResult = await client.query<{
         id: string;
         survey_id: string;
         organization_id: string;
+        worker_id: string;
         status: "draft" | "open" | "closed";
         submitted_at: string | null;
       }>(
-        `select i.id, i.survey_id, i.organization_id, s.status, i.submitted_at
+        `select i.id, i.survey_id, i.organization_id, i.worker_id, s.status, i.submitted_at
          from survey_invitations i join surveys s on s.id = i.survey_id
-         where i.token = $1 and s.survey_type = 'manager_effectiveness'
+         where i.token = $1 and i.organization_id = $2 and s.organization_id = $2
+           and s.survey_type = 'manager_effectiveness'
          for update of i, s`,
-        [input.token],
+        [input.token, await demoOrganizationId(client)],
       );
       const invitation = invitationResult.rows[0];
       if (!invitation) throw new Error("This survey link is not valid.");
+      if (input.viewerWorkerId !== undefined && invitation.worker_id !== input.viewerWorkerId) {
+        throw new Error("This link belongs to another person.");
+      }
       if (invitation.status !== "open") throw new Error("This survey is closed.");
       const deadline = await client.query<{ passed: boolean }>(
         "select closes_at <= clock_timestamp() as passed from surveys where id = $1",
@@ -682,7 +757,6 @@ export async function submitManagerSurveyResponse(input: {
         "update survey_invitations set submitted_at = now() where id = $1",
         [invitation.id],
       );
-      await refreshManagerSurveySnapshots(client, invitation.organization_id, invitation.survey_id);
       await client.query("commit");
     } catch (error) {
       await client.query("rollback");
@@ -693,8 +767,8 @@ export async function submitManagerSurveyResponse(input: {
   });
 }
 
-async function scoreRowsForManager(pool: Pool, surveyId: string, managerId: string) {
-  const result = await pool.query<{
+async function scoreRowsForManager(db: Queryable, surveyId: string, managerId: string) {
+  const result = await db.query<{
     manager_worker_id: string;
     scope: "direct" | "sup_org";
     shown: boolean;
@@ -724,35 +798,60 @@ async function scoreRowsForManager(pool: Pool, surveyId: string, managerId: stri
 }
 
 export async function getShareScores(shareToken: string) {
-  return withFeatureDatabase(async (pool) => {
-    const share = await pool.query<{
+  return withFeatureDatabase((pool) => withExpiredSurveysClosed(pool, async (client, organizationId) => {
+    const share = await client.query<{
       id: string;
       survey_id: string;
       manager_id: string;
       title: string;
       status: "draft" | "open" | "closed";
+      closes_at: string | Date | null;
+      invited: string;
+      responded: string;
       name: string;
     }>(
       `select s.id, s.survey_id, s.scope_sup_org_leader_id as manager_id,
-              v.title, v.status,
+              v.title, v.status, v.closes_at,
+              (select count(*) from survey_invitations i where i.survey_id = v.id) as invited,
+              (select count(*) from survey_invitations i
+               where i.survey_id = v.id and i.submitted_at is not null) as responded,
               coalesce(w.preferred_name, w.first_name) || ' ' || w.last_name as name
        from survey_result_shares s
        join surveys v on v.id = s.survey_id
        join workers w on w.id = s.scope_sup_org_leader_id
-       where s.token = $1 and v.survey_type = 'manager_effectiveness'`,
-      [shareToken],
+       where s.token = $1 and s.organization_id = $2 and v.organization_id = $2
+         and v.survey_type = 'manager_effectiveness'`,
+      [shareToken, organizationId],
     );
     const row = share.rows[0];
     if (!row) return null;
-    await pool.query("update survey_result_shares set last_viewed_at = now() where id = $1", [row.id]);
+    await client.query("update survey_result_shares set last_viewed_at = now() where id = $1", [row.id]);
+    if (row.status !== "closed") {
+      const invited = Number(row.invited);
+      const responded = Number(row.responded);
+      return {
+        surveyId: row.survey_id,
+        title: row.title,
+        status: row.status,
+        closesAt: row.closes_at ? isoDate(row.closes_at) : null,
+        managerId: row.manager_id,
+        managerName: row.name,
+        invited,
+        responded,
+        responseRate: invited ? (responded / invited) * 100 : null,
+        scores: [],
+        questions: [],
+        scoredManagerCount: 0,
+      };
+    }
     const [scores, questions, scoredManagers] = await Promise.all([
-      scoreRowsForManager(pool, row.survey_id, row.manager_id),
-      pool.query<{ id: string; prompt: string; category: string }>(
+      scoreRowsForManager(client, row.survey_id, row.manager_id),
+      client.query<{ id: string; prompt: string; category: string }>(
         `select id, prompt, dimension as category from survey_questions
          where survey_id = $1 order by position`,
         [row.survey_id],
       ),
-      pool.query<{ count: string }>(
+      client.query<{ count: string }>(
         `select count(*) as count from survey_manager_scores
          where survey_id = $1 and scope = 'direct' and shown`,
         [row.survey_id],
@@ -762,13 +861,17 @@ export async function getShareScores(shareToken: string) {
       surveyId: row.survey_id,
       title: row.title,
       status: row.status,
+      closesAt: row.closes_at ? isoDate(row.closes_at) : null,
       managerId: row.manager_id,
       managerName: row.name,
+      invited: Number(row.invited),
+      responded: Number(row.responded),
+      responseRate: Number(row.invited) ? (Number(row.responded) / Number(row.invited)) * 100 : null,
       scores,
       questions: questions.rows,
       scoredManagerCount: Number(scoredManagers.rows[0]?.count ?? 0),
     };
-  });
+  }));
 }
 
 export async function getOutboxMessages() {

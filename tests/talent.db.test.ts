@@ -4,7 +4,7 @@ import { getPool } from "@/lib/db";
 import { managerSurveyResults } from "@/lib/surveys/managerScores";
 import type { SurveyInvitation, SurveyResponse } from "@/lib/surveys/types";
 import { saveReviewTemplate } from "@/lib/server/reviews";
-import { getShareScores, getSurveyFormByToken, submitManagerSurveyResponse } from "@/lib/server/surveys";
+import { closeManagerSurvey, getShareScores, getSurveyFormByToken, submitManagerSurveyResponse } from "@/lib/server/surveys";
 import {
   addOneOnOneAgendaItem,
   getOneOnOneDashboard,
@@ -92,7 +92,7 @@ databaseDescribe("seeded talent database pipelines", () => {
 
   it("persists snapshots matching raw survey invitations, responses, and answers", async () => {
     const surveys = await db().query<{ id: string }>(
-      "select id from surveys where organization_id=$1 order by title",
+      "select id from surveys where organization_id=$1 and status='closed' order by title",
       [await organizationId()],
     );
     for (const survey of surveys.rows) {
@@ -192,23 +192,32 @@ databaseDescribe("seeded talent database pipelines", () => {
       [survey.rows[0].id],
     );
     try {
+      await db().query("delete from survey_manager_scores where survey_id = $1", [survey.rows[0].id]);
       await db().query(
-        "update surveys set closes_at = clock_timestamp() - interval '1 minute' where id = $1",
+        "update surveys set status = 'open', closes_at = clock_timestamp() - interval '1 minute' where id = $1",
         [survey.rows[0].id],
       );
       expect(await getSurveyFormByToken(token.rows[0].token)).toMatchObject({ state: "closed" });
+      const closed = await db().query<{ status: string }>("select status from surveys where id = $1", [survey.rows[0].id]);
+      const snapshots = await db().query<{ count: string }>(
+        "select count(*) as count from survey_manager_scores where survey_id = $1",
+        [survey.rows[0].id],
+      );
+      expect(closed.rows[0].status).toBe("closed");
+      expect(Number(snapshots.rows[0].count)).toBeGreaterThan(0);
       await expect(
         submitManagerSurveyResponse({ token: token.rows[0].token, answers: [] }),
       ).rejects.toThrow("This survey is closed.");
     } finally {
-      await db().query("update surveys set closes_at = $2 where id = $1", [
+      await db().query("update surveys set status = 'open', closes_at = $2 where id = $1", [
         survey.rows[0].id,
         survey.rows[0].closes_at,
       ]);
+      await db().query("delete from survey_manager_scores where survey_id = $1", [survey.rows[0].id]);
     }
   });
 
-  it("refreshes a manager snapshot after a token submission", async () => {
+  it("does not publish manager snapshots after a token submission", async () => {
     const survey = await db().query<{ id: string }>(
       "select id from surveys where title='Q4 Manager Pulse' and status='open'",
     );
@@ -219,18 +228,13 @@ databaseDescribe("seeded talent database pipelines", () => {
                join survey_invitations report on report.id=r.invitation_id
                where report.survey_id=i.survey_id and report.manager_chain[1]=i.manager_chain[1]) as count
        from survey_invitations i
-       join survey_manager_scores score on score.survey_id=i.survey_id
-         and score.manager_worker_id=i.manager_chain[1] and score.scope='direct' and not score.shown
        where i.survey_id=$1 and i.submitted_at is null and cardinality(i.manager_chain)>0
-         and (select count(*) from survey_responses r
-              join survey_invitations report on report.id=r.invitation_id
-              where report.survey_id=i.survey_id and report.manager_chain[1]=i.manager_chain[1])=4
        order by i.id
        limit 1`,
       [openSurveyId],
     );
     const invitation = selected.rows[0];
-    expect(Number(invitation.count)).toBeGreaterThan(0);
+    expect(invitation).toBeDefined();
     const before = await db().query<{ responded: string }>(
       "select count(*) as responded from survey_responses where survey_id=$1",
       [openSurveyId],
@@ -252,13 +256,65 @@ databaseDescribe("seeded talent database pipelines", () => {
       [openSurveyId],
     );
     expect(Number(after.rows[0].responded)).toBe(Number(before.rows[0].responded) + 1);
-    const score = await db().query<{ shown: boolean; respondents: number | null }>(
-      `select shown,respondents from survey_manager_scores
-       where survey_id=$1 and manager_worker_id=$2 and scope='direct'`,
-      [openSurveyId, invitation.manager_id],
+    const snapshots = await db().query<{ count: string }>(
+      "select count(*) as count from survey_manager_scores where survey_id = $1",
+      [openSurveyId],
     );
-    expect(score.rows[0].shown).toBe(true);
-    expect(score.rows[0].respondents).toBe(Number(invitation.count) + 1);
+    expect(Number(snapshots.rows[0].count)).toBe(0);
+  });
+
+  it("persists snapshots matching raw survey results when an open survey closes", async () => {
+    const survey = await db().query<{ id: string; closes_at: Date | null }>(
+      "select id, closes_at from surveys where title = 'Q4 Manager Pulse' and status = 'open'",
+    );
+    const surveyId = survey.rows[0].id;
+    try {
+      await closeManagerSurvey(surveyId);
+      const computed = await loadSurveyResult(surveyId);
+      const snapshots = await db().query<{
+        manager_worker_id: string;
+        scope: "direct" | "sup_org";
+        shown: boolean;
+        respondents: number | null;
+        overall_score: string | number | null;
+        rank: number | null;
+        category_scores: { category: string; score: number | null }[];
+        item_scores: { questionId: string; score: number | null }[];
+      }>(
+        "select manager_worker_id,scope,shown,respondents,overall_score,rank,category_scores,item_scores from survey_manager_scores where survey_id=$1",
+        [surveyId],
+      );
+      expect(snapshots.rows).toHaveLength(computed.managers.length * 2);
+      for (const manager of computed.managers) {
+        const supOrg = computed.supOrgs.find((row) => row.leaderId === manager.managerId);
+        for (const [scope, shown, block, rank] of [
+          ["direct", manager.scored, manager.direct, manager.rank],
+          ["sup_org", supOrg?.shown ?? false, supOrg?.total ?? null, null],
+        ] as const) {
+          const snapshot = snapshots.rows.find(
+            (row) => row.manager_worker_id === manager.managerId && row.scope === scope,
+          );
+          expect(snapshot?.shown).toBe(shown);
+          expect(snapshot?.respondents).toBe(shown ? block?.respondents ?? null : null);
+          if (!shown || !block || block.overall === null) {
+            expect(snapshot?.overall_score).toBeNull();
+          } else {
+            expect(Number(snapshot?.overall_score)).toBeCloseTo(block.overall, 7);
+          }
+          expect(snapshot?.rank).toBe(scope === "direct" && shown ? rank : null);
+          if (shown) {
+            expect(snapshot?.category_scores).toEqual(block?.categories);
+            expect(snapshot?.item_scores).toEqual(block?.items);
+          }
+        }
+      }
+    } finally {
+      await db().query("update surveys set status = 'open', closes_at = $2 where id = $1", [
+        surveyId,
+        survey.rows[0].closes_at,
+      ]);
+      await db().query("delete from survey_manager_scores where survey_id = $1", [surveyId]);
+    }
   });
 
   it("keeps manager share loading limited to that token's leader", async () => {
@@ -274,8 +330,8 @@ databaseDescribe("seeded talent database pipelines", () => {
   });
 
   it("preserves agenda text and includes its discussed state in meeting history", async () => {
-    const seriesRow = await db().query<{ id: string }>(
-      `select id from one_on_one_series
+    const seriesRow = await db().query<{ id: string; manager_worker_id: string }>(
+      `select id, manager_worker_id from one_on_one_series
        limit 1`,
     );
     expect(seriesRow.rows[0]).toBeDefined();
@@ -302,7 +358,16 @@ databaseDescribe("seeded talent database pipelines", () => {
         reportPrivateNotes: "",
         reportPulse: null,
       });
-      const series = await getOneOnOneSeries(seriesId);
+      const series = await getOneOnOneSeries(seriesId, {
+        id: "test-manager",
+        organizationId: await organizationId(),
+        role: "manager",
+        workerId: seriesRow.rows[0].manager_worker_id,
+        email: "test-manager@example.invalid",
+        displayName: "Test manager",
+        canViewCompensation: false,
+        canViewDemographics: false,
+      });
       const meeting = series?.meetings.find((item) => item.id === meetingId);
       expect(meeting?.agenda).toContainEqual({
         id: agendaItemId,

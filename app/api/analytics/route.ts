@@ -1,9 +1,12 @@
 import { dataCoverage, periodFor, resolveAnalyticsSelection } from "@/lib/metrics/views";
 import { getWorkforceDataset } from "@/lib/workforce";
+import { requireRole } from "@/lib/auth/session";
+import { stripCompensationDetails } from "@/lib/auth/compensation";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
+  const user = await requireRole("client_admin", "consultant");
   const { searchParams } = new URL(request.url);
   const selection = resolveAnalyticsSelection(
     searchParams.get("d") ?? undefined,
@@ -16,5 +19,8 @@ export async function GET(request: Request) {
     periodFor(selection.periodKind, dataset.organization.asOfDate),
   );
 
-  return Response.json({ result, coverage: dataCoverage(dataset) });
+  return Response.json({
+    result: user.canViewCompensation ? result : stripCompensationDetails(result),
+    coverage: dataCoverage(dataset),
+  });
 }

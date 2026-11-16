@@ -11,6 +11,8 @@ import {
   type ChangeType,
 } from "@/lib/server/changeRequests";
 import type { ApproverRef } from "@/lib/approvals/workflow";
+import { requireRole } from "@/lib/auth/session";
+import { isAdmin } from "@/lib/auth/permissions";
 
 function messageFrom(error: unknown) {
   return error instanceof Error ? error.message : "The change request could not be saved.";
@@ -25,11 +27,15 @@ function parseApprovers(raw: string): ApproverRef[] {
 }
 
 export async function submitChangeRequestAction(formData: FormData) {
+  const user = await requireRole("client_admin", "consultant", "manager");
+  if (!user.workerId) redirect("/requests?error=This+account+is+not+linked+to+a+worker");
   let requestId: string;
   try {
     requestId = await submitChangeRequest({
       subjectWorkerId: String(formData.get("subjectWorkerId") ?? ""),
-      submittedByWorkerId: String(formData.get("submittedByWorkerId") ?? ""),
+      submittedByWorkerId: user.workerId,
+      viewerWorkerId: user.workerId,
+      allowAdmin: isAdmin(user),
       changeType: String(formData.get("changeType") ?? "") as ChangeType,
       currentValue: String(formData.get("currentValue") ?? "") || null,
       requestedValue: String(formData.get("requestedValue") ?? ""),
@@ -47,9 +53,11 @@ export async function submitChangeRequestAction(formData: FormData) {
 }
 
 export async function withdrawChangeRequestAction(formData: FormData) {
+  const user = await requireRole("client_admin", "consultant", "manager");
+  if (!user.workerId) redirect("/requests?error=This+account+is+not+linked+to+a+worker");
   const requestId = String(formData.get("requestId") ?? "");
   try {
-    await withdrawChangeRequest(requestId, String(formData.get("submitterWorkerId") ?? ""));
+    await withdrawChangeRequest(requestId, user.workerId);
   } catch (error) {
     redirect(`/requests/${requestId}?error=${encodeURIComponent(messageFrom(error))}`);
   }
@@ -59,6 +67,7 @@ export async function withdrawChangeRequestAction(formData: FormData) {
 }
 
 export async function reassignChangeRequestAction(formData: FormData) {
+  await requireRole("client_admin", "consultant");
   const requestId = String(formData.get("requestId") ?? "");
   const [kind, approverId] = String(formData.get("approverRef") ?? "").split(":", 2);
   const approver: ApproverRef = kind === "position"
@@ -76,6 +85,7 @@ export async function reassignChangeRequestAction(formData: FormData) {
 }
 
 export async function saveApprovalTemplateAction(formData: FormData) {
+  await requireRole("client_admin", "consultant");
   const name = String(formData.get("name") ?? "");
   const changeType = String(formData.get("changeType") ?? "") || null;
   let steps: ApproverRef[];
@@ -102,6 +112,7 @@ export async function saveApprovalTemplateAction(formData: FormData) {
 }
 
 export async function archiveApprovalTemplateAction(formData: FormData) {
+  await requireRole("client_admin", "consultant");
   const id = String(formData.get("templateId") ?? "");
   try {
     await archiveApprovalTemplate(id);

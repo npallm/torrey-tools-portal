@@ -3,6 +3,8 @@ import { PageHeader } from "@/components/PageHeader";
 import { isDatabaseRequiredError } from "@/lib/server/common";
 import { getApprovalByToken } from "@/lib/server/changeRequests";
 import { decideApprovalAction } from "@/app/approvals/actions";
+import { requireUser } from "@/lib/auth/session";
+import { isIntendedWorker } from "@/lib/auth/ownership";
 
 export const dynamic = "force-dynamic";
 
@@ -14,12 +16,16 @@ export default async function ApprovalPage({
   searchParams: Promise<{ error?: string | string[]; decided?: string | string[] }>;
 }) {
   const { token } = await params;
+  const user = await requireUser(`/approvals/${token}`);
   const query = await searchParams;
   const error = typeof query.error === "string" ? query.error : null;
   const decided = typeof query.decided === "string" ? query.decided : null;
   try {
     const data = await getApprovalByToken(token);
     if (!data) return <p className="rounded border bg-white p-5">This approval link is not valid.</p>;
+    if (!isIntendedWorker(user, data.approverWorkerId)) {
+      return <p className="rounded border bg-white p-5">This link belongs to another person.</p>;
+    }
     const { request } = data;
     return (
       <div className="mx-auto max-w-3xl space-y-6">

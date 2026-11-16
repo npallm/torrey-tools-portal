@@ -17,11 +17,19 @@ type ScoreRow = {
 type SurveyData = {
   id: string;
   status: "draft" | "open" | "closed";
+  closesAt: string | null;
   invited: number;
   responded: number;
   responseRate: number | null;
   managersScored: number;
   managerCount: number;
+  departmentResponses: {
+    department: string;
+    suppressed: boolean;
+    invited: number | null;
+    responded: number | null;
+    responseRate: number | null;
+  }[];
   questions: { id: string; prompt: string; category: string }[];
   direct: ScoreRow[];
   supOrgs: ScoreRow[];
@@ -38,8 +46,6 @@ export function ManagerSurveyResults({ initialData }: { initialData: SurveyData 
   const [division, setDivision] = useState("");
   const [department, setDepartment] = useState("");
   const [search, setSearch] = useState("");
-  const [updatedAt, setUpdatedAt] = useState(Date.now());
-  const [clock, setClock] = useState(Date.now());
 
   useEffect(() => {
     if (data.status !== "open") return;
@@ -48,14 +54,9 @@ export function ManagerSurveyResults({ initialData }: { initialData: SurveyData 
       if (!response.ok) return;
       const next = (await response.json()) as SurveyData;
       setData(next);
-      setUpdatedAt(Date.now());
     };
     const interval = window.setInterval(() => void refresh(), 5000);
-    const clockInterval = window.setInterval(() => setClock(Date.now()), 1000);
-    return () => {
-      window.clearInterval(interval);
-      window.clearInterval(clockInterval);
-    };
+    return () => window.clearInterval(interval);
   }, [data.id, data.status]);
 
   const rows = scope === "direct" ? data.direct : data.supOrgs;
@@ -69,23 +70,53 @@ export function ManagerSurveyResults({ initialData }: { initialData: SurveyData 
   );
   const scored = scope === "direct" ? filtered.filter((row) => row.shown) : filtered.filter((row) => row.shown);
   const unscored = scope === "direct" ? filtered.filter((row) => !row.shown) : [];
-  const elapsed = Math.max(0, Math.floor((clock - updatedAt) / 1000));
+  const kpis = [
+    ["Invited", String(data.invited)],
+    ["Responded", String(data.responded)],
+    ["Response rate", data.responseRate === null ? "—" : `${data.responseRate.toFixed(1)}%`],
+    ...(data.status === "closed" ? [["Managers scored", `${data.managersScored} of ${data.managerCount}`]] : []),
+  ];
+  const publicationMessage = data.closesAt
+    ? `Manager scores and rankings are published when the survey closes on ${data.closesAt}.`
+    : "Manager scores and rankings are published when an admin closes it.";
 
   return (
     <section className="mt-6">
       <div className="mb-5 grid gap-3 sm:grid-cols-4">
-        {[
-          ["Invited", String(data.invited)],
-          ["Responded", String(data.responded)],
-          ["Response rate", data.responseRate === null ? "—" : `${data.responseRate.toFixed(1)}%`],
-          ["Managers scored", `${data.managersScored} of ${data.managerCount}`],
-        ].map(([label, value]) => (
+        {kpis.map(([label, value]) => (
           <div key={label} className="rounded-lg border bg-white p-4">
             <p className="text-xs uppercase text-slate-500">{label}</p>
             <p className="mt-1 text-xl font-semibold">{value}</p>
           </div>
         ))}
       </div>
+      {data.status === "open" ? (
+        <>
+          <p className="rounded border border-brand-200 bg-brand-50 p-4 text-sm">{publicationMessage}</p>
+          <section className="mt-4 rounded-lg border bg-white p-4">
+            <h2 className="font-semibold">Response rate by department</h2>
+            <div className="mt-3 overflow-x-auto">
+              <table className="min-w-full divide-y text-sm">
+                <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+                  <tr><th className="p-3">Department</th><th className="p-3">Invited</th><th className="p-3">Responded</th><th className="p-3">Response rate</th></tr>
+                </thead>
+                <tbody className="divide-y">
+                  {data.departmentResponses.map((row) => (
+                    <tr key={row.department}>
+                      <td className="p-3">{row.department}</td>
+                      <td className="p-3">{row.suppressed ? "<5" : row.invited}</td>
+                      <td className="p-3">{row.suppressed ? "<5" : row.responded}</td>
+                      <td className="p-3">{row.suppressed ? "<5" : row.responseRate === null ? "—" : `${row.responseRate.toFixed(1)}%`}</td>
+                    </tr>
+                  ))}
+                  {!data.departmentResponses.length && <tr><td colSpan={4} className="p-4 text-slate-500">No invitations yet.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </>
+      ) : (
+        <>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex gap-2">
           <button
@@ -103,8 +134,7 @@ export function ManagerSurveyResults({ initialData }: { initialData: SurveyData 
             Whole sup org
           </button>
         </div>
-        {data.status === "open" && <p className="text-sm text-emerald-700">Live · updated {elapsed}s ago</p>}
-      </div>
+        </div>
       <div className="mb-4 grid gap-3 sm:grid-cols-3">
         <label className="text-xs font-medium text-slate-600">
           Division
@@ -190,6 +220,8 @@ export function ManagerSurveyResults({ initialData }: { initialData: SurveyData 
             </tbody>
           </table>
         </div>
+      )}
+        </>
       )}
     </section>
   );

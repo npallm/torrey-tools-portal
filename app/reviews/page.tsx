@@ -3,10 +3,12 @@ import { PageHeader } from "@/components/PageHeader";
 import { DatabaseNotice } from "@/components/DatabaseNotice";
 import { isDatabaseRequiredError } from "@/lib/server/common";
 import { getReviewCycles } from "@/lib/server/reviews";
+import { requireRole } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
 export default async function ReviewsPage() {
+  await requireRole("client_admin", "consultant");
   try {
     const cycles = await getReviewCycles();
     return (

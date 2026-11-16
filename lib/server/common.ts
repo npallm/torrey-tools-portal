@@ -1,5 +1,7 @@
 import type { Pool, PoolClient } from "pg";
+import { cookies } from "next/headers";
 import { getPool } from "@/lib/db";
+import { getCurrentUser } from "@/lib/auth/session";
 
 export const DATABASE_REQUIRED_MESSAGE =
   "This feature needs the database: npm run db:up && npm run db:reset";
@@ -47,12 +49,19 @@ export async function withFeatureDatabase<T>(work: (pool: Pool) => Promise<T>): 
 }
 
 export async function demoOrganizationId(pool: Pool | PoolClient): Promise<string> {
-  const result = await pool.query<{ id: string }>(
-    "select id from organizations where slug = 'demo'",
-  );
-  const organizationId = result.rows[0]?.id;
-  if (!organizationId) throw new Error("The demo organization has not been seeded.");
-  return organizationId;
+  try {
+    await cookies();
+  } catch {
+    const demo = await pool.query<{ id: string }>(
+      "select id from organizations where slug = 'demo'",
+    );
+    const demoId = demo.rows[0]?.id;
+    if (!demoId) throw new Error("The demo organization has not been seeded.");
+    return demoId;
+  }
+  const user = await getCurrentUser();
+  if (!user) throw new Error("Authentication required.");
+  return user.organizationId;
 }
 
 export function isoDate(value: string | Date): string {

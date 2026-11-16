@@ -4,10 +4,12 @@ import { CopyLink } from "@/components/CopyLink";
 import { markOutboxSentAction } from "@/app/surveys/actions";
 import { isDatabaseRequiredError } from "@/lib/server/common";
 import { getOutboxMessages } from "@/lib/server/surveys";
+import { requireRole } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
 export default async function OutboxPage() {
+  await requireRole("client_admin", "consultant");
   try {
     const messages = await getOutboxMessages();
     return (

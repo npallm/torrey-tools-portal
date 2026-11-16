@@ -24,10 +24,10 @@ Schema: `db/migrations/002_talent.sql`, `003_manager_survey.sql`. Calculations: 
     - for every pair of nested sup orgs that are both shown, the difference between their uncovered respondents is 0 or at least 5. Otherwise the smaller one is hidden.
   - Without these rules, you could subtract a scored team or a nested org from a total and recover an unscored small team's average.
   - Response counts are never shown for managers or orgs without a score.
-- **Persistence:** after every submission and when the survey closes, the server recomputes the scores and upserts `survey_manager_scores` (scope `direct` or `sup_org`). Pages and APIs read only these rows.
+- **Persistence:** scores are computed and persisted to `survey_manager_scores` (scope `direct` or `sup_org`) only when an admin closes the survey or its close deadline passes. While open, pages and APIs expose counts only; submission never writes score snapshots.
 - **Views:**
   - The admin page shows the ranking table (direct reports) and a toggle for sup-org totals, with filters by the manager's division and department.
-  - Each manager gets a private `/r/<token>` link showing their own team score and rank, plus a toggle for their whole-org total. It updates live while the survey is open.
+  - Each manager gets a private `/r/<token>` link showing their own team score and rank after the survey closes, plus a toggle for their whole-org total.
 
 ## Performance management
 - **Templates:** a rating scale, plus weighted competency and question items, and an optional goals section with its own weight.
@@ -42,6 +42,7 @@ Schema: `db/migrations/002_talent.sql`, `003_manager_survey.sql`. Calculations: 
 ## 1:1s
 - Each manager–report pair has a series with a cadence (default 14 days).
 - Meetings have shared notes, private notes for each side, and an optional 1–5 pulse from the report.
+- Only the two participants can see meeting details. Shared notes, agenda and pulse are visible to both; a manager sees only manager-private notes and a report sees only report-private notes. Nonparticipant admins see health/adherence in the list but no meeting details.
 - The agenda queue fills up between meetings. Open action items carry forward until completed.
 - **Health:** status depends on the days since the last held meeting:
   - Up to the cadence: On track ("Not started" if no meeting has been held yet).
@@ -93,6 +94,7 @@ Every number on screen is computed on the server by the function listed below, f
 | Goal attainment | `goals` | `goalAttainment` | computed on read | reviews pages |
 | 1:1 status, adherence | `one_on_one_series`, `one_on_one_meetings` | `oneOnOneHealth` | computed on read | `/one-on-ones` |
 | Action item status | `one_on_one_action_items` | `actionItemStatus` | computed on read | `/one-on-ones/[id]` |
+| Peer feedback results | `feedback_responses`, `feedback_requests.min_responses` | `feedbackResultsUnlocked`, stable response-ID ordering | feedback response rows | `/feedback/[id]` after the minimum response count |
 | Role risk score and band | `critical_roles.impact_of_loss`, `probability_of_loss` | `roleRiskScore`, `riskBand` | computed on read | `/succession` |
 | Bench strength, coverage, single points of failure | `succession_candidates.readiness` | `benchStrength`, `benchCoverage`, `singlePointsOfFailure` | computed on read | `/succession` |
 | Potential segment, performance trend | `talent_profiles`, `review_outcomes.calibrated_rating` | `potentialSegment`, `performanceTrend` | computed on read | `/succession` |
@@ -101,3 +103,4 @@ Every number on screen is computed on the server by the function listed below, f
 ## Known limitations
 - The portal has no login yet. Private 1:1 notes and compensation are only labelled as private in the UI, not enforced. `portal_users` roles and flags in `001_init.sql` will enforce them once auth lands.
 - Invitations go to the `outbox_messages` table until an email provider is configured.
+- Peer feedback comments and average ratings stay hidden until the configured minimum response count is reached (three by default).

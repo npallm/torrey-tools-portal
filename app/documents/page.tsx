@@ -1,6 +1,7 @@
 import { Badge } from "@/components/Badge";
 import { PageHeader } from "@/components/PageHeader";
 import { documents } from "@/lib/data";
+import { requireUser } from "@/lib/auth/session";
 
 const categoryTone: Record<string, "blue" | "green" | "yellow" | "slate" | "red"> =
   {
@@ -11,7 +12,8 @@ const categoryTone: Record<string, "blue" | "green" | "yellow" | "slate" | "red"
     Compliance: "red",
   };
 
-export default function DocumentsPage() {
+export default async function DocumentsPage() {
+  await requireUser("/documents");
   return (
     <div>
       <PageHeader

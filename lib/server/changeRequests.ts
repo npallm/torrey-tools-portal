@@ -16,6 +16,9 @@ import {
 } from "@/lib/approvals/workflow";
 import { getActivePeople } from "@/lib/server/org";
 import { demoOrganizationId, withFeatureDatabase } from "@/lib/server/common";
+import { managerChain } from "@/lib/org/hierarchy";
+import { isAdmin } from "@/lib/auth/permissions";
+import type { CurrentUser } from "@/lib/auth/session-core";
 
 export const CHANGE_REQUEST_TYPES = [
   { value: "title", label: "Title change" },
@@ -60,6 +63,8 @@ export type ChangeRequestInput = {
   reason: string | null;
   approvers: ApproverRef[];
   approvalTemplateId?: string | null;
+  viewerWorkerId?: string | null;
+  allowAdmin?: boolean;
 };
 
 function displayName(firstName: string, lastName: string, preferredName: string | null) {
@@ -233,7 +238,7 @@ async function loadTemplates(
   }));
 }
 
-export async function getChangeRequestFormData() {
+export async function getChangeRequestFormData(viewer?: CurrentUser) {
   return withFeatureDatabase(async (pool) => {
     const organizationId = await demoOrganizationId(pool);
     const [people, positions, templates] = await Promise.all([
@@ -241,7 +246,13 @@ export async function getChangeRequestFormData() {
       positionOptions(pool, organizationId),
       loadTemplates(pool, organizationId, false),
     ]);
-    return { people, positions, templates };
+    return {
+      people: viewer && !isAdmin(viewer)
+        ? viewer.workerId ? people.filter((person) => person.managerId === viewer.workerId) : []
+        : people,
+      positions,
+      templates,
+    };
   });
 }
 
@@ -460,6 +471,18 @@ export async function submitChangeRequest(input: ChangeRequestInput): Promise<st
 
   return withFeatureDatabase((pool) => inTransaction(pool, async (client) => {
     const organizationId = await demoOrganizationId(client);
+    if (input.viewerWorkerId !== undefined) {
+      if (!input.viewerWorkerId) throw new Error("This account is not linked to a worker.");
+      if (input.submittedByWorkerId !== input.viewerWorkerId) {
+        throw new Error("You can submit a request only for your own account.");
+      }
+      if (!input.allowAdmin) {
+        const people = await getActivePeople();
+        if (managerChain(input.subjectWorkerId, people).at(0) !== input.viewerWorkerId) {
+          throw new Error("Managers can submit requests only for their direct reports.");
+        }
+      }
+    }
     const [submitter, subject] = await Promise.all([
       workerIdentity(client, organizationId, input.submittedByWorkerId),
       workerIdentity(client, organizationId, input.subjectWorkerId),
@@ -777,7 +800,11 @@ export async function reassignChangeRequestStep(requestId: string, approver: App
   }));
 }
 
-export async function getChangeRequests(filters: { status?: string; changeType?: string } = {}) {
+export async function getChangeRequests(filters: {
+  status?: string;
+  changeType?: string;
+  viewer?: CurrentUser;
+} = {}) {
   return withFeatureDatabase(async (pool) => {
     const organizationId = await demoOrganizationId(pool);
     const status = validateRequestStatus(filters.status) ? filters.status : null;
@@ -806,8 +833,27 @@ export async function getChangeRequests(filters: { status?: string; changeType?:
        left join workers sw on sw.id = cr.submitted_by_worker_id and sw.organization_id=cr.organization_id
        where cr.organization_id=$1 and ($2::text is null or cr.status=$2)
          and ($3::text is null or cr.change_type=$3)
+         and (
+           not $6 or $5
+           or ($4::uuid is not null and (
+             cr.submitted_by_worker_id=$4 or cr.worker_id=$4
+             or exists (
+             select 1 from job_assignments ja
+             where ja.organization_id=cr.organization_id and ja.worker_id=cr.worker_id
+               and ja.manager_worker_id=$4 and ja.effective_from<=current_date
+               and (ja.effective_to is null or ja.effective_to>=current_date)
+             )
+           ))
+         )
        order by cr.created_at desc`,
-      [organizationId, status, changeType],
+      [
+        organizationId,
+        status,
+        changeType,
+        filters.viewer?.workerId,
+        filters.viewer ? isAdmin(filters.viewer) : false,
+        filters.viewer !== undefined,
+      ],
     );
     if (!requests.rows.length) return [];
     const ids = requests.rows.map((row) => row.id);
@@ -1024,9 +1070,26 @@ async function loadRequestDetail(pool: Pool, organizationId: string, requestId: 
   };
 }
 
-export async function getChangeRequestDetail(requestId: string) {
+export async function getChangeRequestDetail(requestId: string, viewer?: CurrentUser) {
   return withFeatureDatabase(async (pool) => {
     const organizationId = await demoOrganizationId(pool);
+    if (viewer && !isAdmin(viewer)) {
+      const allowed = await pool.query(
+        `select 1 from change_requests cr
+         where cr.id=$1 and cr.organization_id=$2
+           and ($3::uuid is not null and (
+             cr.submitted_by_worker_id=$3 or cr.worker_id=$3
+             or exists (
+               select 1 from job_assignments ja
+               where ja.organization_id=cr.organization_id and ja.worker_id=cr.worker_id
+                 and ja.manager_worker_id=$3 and ja.effective_from<=current_date
+                 and (ja.effective_to is null or ja.effective_to>=current_date)
+             )
+           ))`,
+        [requestId, organizationId, viewer.workerId],
+      );
+      if (!allowed.rowCount) return null;
+    }
     return loadRequestDetail(pool, organizationId, requestId);
   });
 }
@@ -1063,6 +1126,7 @@ export async function getApprovalByToken(token: string) {
       request,
       token,
       approverName: approver.rows[0]?.name ?? "Approver",
+      approverWorkerId: link.worker_id,
       used: Boolean(link.used_at),
       actionable: Boolean(
         request.status === "pending"

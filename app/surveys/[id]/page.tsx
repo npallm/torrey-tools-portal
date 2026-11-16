@@ -5,10 +5,12 @@ import { ManagerSurveyResults } from "@/components/surveys/ManagerSurveyResults"
 import { closeSurveyAction, launchSurveyAction } from "@/app/surveys/actions";
 import { isDatabaseRequiredError } from "@/lib/server/common";
 import { getSurvey } from "@/lib/server/surveys";
+import { requireRole } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
 export default async function SurveyDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  await requireRole("client_admin", "consultant");
   const { id } = await params;
   try {
     const survey = await getSurvey(id);

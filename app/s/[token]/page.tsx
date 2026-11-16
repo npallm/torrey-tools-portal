@@ -4,6 +4,8 @@ import { submitSurveyAction } from "@/app/surveys/actions";
 import { LIKERT_LABELS } from "@/lib/surveys/managerQuestions";
 import { isDatabaseRequiredError } from "@/lib/server/common";
 import { getSurveyFormByToken } from "@/lib/server/surveys";
+import { requireUser } from "@/lib/auth/session";
+import { isIntendedWorker } from "@/lib/auth/ownership";
 
 export const dynamic = "force-dynamic";
 
@@ -15,10 +17,14 @@ export default async function PublicSurveyPage({
   searchParams: Promise<{ error?: string; submitted?: string }>;
 }) {
   const [{ token }, query] = await Promise.all([params, searchParams]);
+  const user = await requireUser(`/s/${token}`);
   try {
     const survey = await getSurveyFormByToken(token);
     if (survey.state === "unknown") return <p className="mx-auto max-w-xl rounded-lg bg-white p-6">This survey link is not valid.</p>;
-    if (survey.state === "closed") return <p className="mx-auto max-w-xl rounded-lg bg-white p-6">This survey is closed.</p>;
+    if ("workerId" in survey && !isIntendedWorker(user, survey.workerId)) {
+      return <p className="mx-auto max-w-xl rounded-lg bg-white p-6">This link belongs to another person.</p>;
+    }
+    if (survey.state === "closed") return <div className="mx-auto max-w-xl"><PageHeader title={survey.title} /><p className="rounded-lg bg-white p-6">This survey is closed.</p></div>;
     if (survey.state === "submitted" || query.submitted) return <p className="mx-auto max-w-xl rounded-lg bg-white p-6 text-center"><strong>Thank you.</strong><br />Your feedback has been submitted.</p>;
     if (survey.state !== "open") return <p className="mx-auto max-w-xl rounded-lg bg-white p-6">This survey is not available.</p>;
     const grouped = new Map<string, typeof survey.questions>();
