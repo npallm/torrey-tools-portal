@@ -10,6 +10,9 @@ const { redirectMock, revalidatePathMock, saveApprovalTemplateMock } = vi.hoiste
 
 vi.mock("next/navigation", () => ({ redirect: redirectMock }));
 vi.mock("next/cache", () => ({ revalidatePath: revalidatePathMock }));
+vi.mock("@/lib/auth/session", () => ({
+  requireRole: async () => ({ role: "client_admin", workerId: "worker-1" }),
+}));
 vi.mock("@/lib/server/changeRequests", () => ({
   archiveApprovalTemplate: vi.fn(),
   reassignChangeRequestStep: vi.fn(),

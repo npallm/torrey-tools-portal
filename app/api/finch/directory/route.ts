@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { finchConfigured, getFinchDirectory } from "@/lib/finch";
 import { employees } from "@/lib/data";
+import { requireUser } from "@/lib/auth/session";
 
 export async function GET() {
+  await requireUser("/api/finch/directory");
   if (!finchConfigured()) {
     // Fall back to seed data so the portal works before Finch is connected.
     return NextResponse.json({

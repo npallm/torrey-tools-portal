@@ -3,10 +3,12 @@ import { DatabaseNotice } from "@/components/DatabaseNotice";
 import { ReviewTemplateEditor } from "@/components/reviews/ReviewTemplateEditor";
 import { isDatabaseRequiredError } from "@/lib/server/common";
 import { getReviewTemplates } from "@/lib/server/reviews";
+import { requireRole } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
 export default async function ReviewTemplatesPage() {
+  await requireRole("client_admin", "consultant");
   try {
     const templates = await getReviewTemplates();
     return <div><PageHeader title="Review templates" subtitle="Rating scales, weighted items and goal settings." />

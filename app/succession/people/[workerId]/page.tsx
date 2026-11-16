@@ -3,6 +3,7 @@ import { DatabaseNotice } from "@/components/DatabaseNotice";
 import { saveProfileAction } from "@/app/succession/actions";
 import { isDatabaseRequiredError } from "@/lib/server/common";
 import { getTalentPersonProfile } from "@/lib/server/succession";
+import { requireRole } from "@/lib/auth/session";
 
 const actionTypeLabels = {
   experience: "Experience",
@@ -19,6 +20,7 @@ const actionStatusLabels: Record<string, string> = {
 export const dynamic="force-dynamic";
 
 export default async function TalentProfilePage({params}:{params:Promise<{workerId:string}>}){
+  await requireRole("client_admin", "consultant");
   const {workerId}=await params;
   try{
     const data=await getTalentPersonProfile(workerId); if(!data)return <p>Employee not found.</p>;

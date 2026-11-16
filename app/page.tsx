@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Badge, statusTone } from "@/components/Badge";
 import { PageHeader } from "@/components/PageHeader";
+import { requireUser } from "@/lib/auth/session";
 import {
   documents,
   employeeName,
@@ -10,7 +11,8 @@ import {
   reviews,
 } from "@/lib/data";
 
-export default function Dashboard() {
+export default async function Dashboard() {
+  await requireUser("/");
   const pendingPto = ptoRequests.filter((r) => r.status === "Pending");
   const openTasks = onboardingTasks.filter((t) => !t.done);
   const openReviews = reviews.filter((r) => r.status !== "Complete");

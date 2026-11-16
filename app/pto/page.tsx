@@ -1,8 +1,10 @@
 import { Badge, statusTone } from "@/components/Badge";
 import { PageHeader } from "@/components/PageHeader";
 import { employeeName, ptoRequests } from "@/lib/data";
+import { requireUser } from "@/lib/auth/session";
 
-export default function PtoPage() {
+export default async function PtoPage() {
+  await requireUser("/pto");
   const pending = ptoRequests.filter((r) => r.status === "Pending");
   const decided = ptoRequests.filter((r) => r.status !== "Pending");
 

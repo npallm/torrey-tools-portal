@@ -4,10 +4,12 @@ import { DatabaseNotice } from "@/components/DatabaseNotice";
 import { isDatabaseRequiredError } from "@/lib/server/common";
 import { getSuccessionDashboard } from "@/lib/server/succession";
 import { READINESS_LABELS } from "@/lib/talent/succession";
+import { requireRole } from "@/lib/auth/session";
 
 export const dynamic="force-dynamic";
 
 export default async function SuccessionPage(){
+  await requireRole("client_admin", "consultant");
   try{
     const data=await getSuccessionDashboard();
     return <div><PageHeader title="Succession planning" subtitle="Contemporary talent segments, critical-role risk and bench strength."/>

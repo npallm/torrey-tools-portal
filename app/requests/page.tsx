@@ -8,6 +8,8 @@ import {
   getChangeRequests,
 } from "@/lib/server/changeRequests";
 import Link from "next/link";
+import { requireRole } from "@/lib/auth/session";
+import { isAdmin } from "@/lib/auth/permissions";
 
 export const dynamic = "force-dynamic";
 
@@ -16,14 +18,15 @@ export default async function RequestsPage({
 }: {
   searchParams: Promise<{ status?: string | string[]; type?: string | string[]; error?: string | string[] }>;
 }) {
+  const user = await requireRole("client_admin", "consultant", "manager");
   const query = await searchParams;
   const status = typeof query.status === "string" ? query.status : "all";
   const type = typeof query.type === "string" ? query.type : "all";
   const error = typeof query.error === "string" ? query.error : null;
   try {
     const [options, requests] = await Promise.all([
-      getChangeRequestFormData(),
-      getChangeRequests({ status, changeType: type }),
+      getChangeRequestFormData(user),
+      getChangeRequests({ status, changeType: type, viewer: user }),
     ]);
     return (
       <div className="space-y-6">
@@ -31,10 +34,10 @@ export default async function RequestsPage({
           title="Employee Change Requests"
           subtitle="Submit, track, and approve employee changes through a sequential approval flow."
         />
-        <div className="flex flex-wrap gap-2">
+        {isAdmin(user) && <div className="flex flex-wrap gap-2">
           <Link href="/approvals/templates" className="rounded border bg-white px-3 py-2 text-sm">Approval templates</Link>
           <Link href="/outbox" className="rounded border bg-white px-3 py-2 text-sm">Outbox</Link>
-        </div>
+        </div>}
         {error && <p role="alert" className="rounded border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
         <RequestComposer
           people={options.people.map((person) => ({ id: person.id, name: person.name, department: person.department }))}

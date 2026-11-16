@@ -7,6 +7,7 @@ import {
 } from "@/lib/finch";
 import { employees } from "@/lib/data";
 import type { FinchDirectoryEntry } from "@/lib/types";
+import { requireRole } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +37,7 @@ async function loadDirectory(): Promise<{
 }
 
 export default async function IntegrationsPage() {
+  await requireRole("client_admin", "consultant");
   const { source, rows, error } = await loadDirectory();
 
   return (

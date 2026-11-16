@@ -4,14 +4,20 @@ import { ReviewAssignmentForm } from "@/components/reviews/ReviewAssignmentForm"
 import { isDatabaseRequiredError } from "@/lib/server/common";
 import { getReviewAssignment } from "@/lib/server/reviews";
 import { goalStatusLabel } from "@/lib/talent/reviews";
+import { requireUser } from "@/lib/auth/session";
+import { isAdmin } from "@/lib/auth/permissions";
 
 export const dynamic = "force-dynamic";
 
 export default async function ReviewAssignmentPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const user = await requireUser(`/reviews/assignments/${id}`);
   try {
     const assignment = await getReviewAssignment(id);
     if (!assignment) return <p>Review assignment not found.</p>;
+    if (assignment.reviewerWorkerId !== user.workerId && !isAdmin(user)) {
+      return <p className="rounded border bg-white p-5">This review assignment is not assigned to you.</p>;
+    }
     return (
       <div>
         <PageHeader title={`${assignment.subjectName} · ${assignment.role} review`} subtitle={`${assignment.cycleName} · ${assignment.templateName}`} />

@@ -226,7 +226,15 @@ databaseDescribe("change request approval database flow", () => {
       [id, `/requests/${id}`],
     );
     expect(decisionEmail.rows[0].subject).toContain("was rejected");
-    expect(decisionEmail.rows[0].to_email).toContain("@example.invalid");
+    const submitterEmail = await db().query<{ email: string }>(
+      `select c.value as email
+       from change_requests cr
+       join worker_contacts c on c.worker_id=cr.submitted_by_worker_id and c.organization_id=cr.organization_id
+       where cr.id=$1 and c.kind='email' and c.usage='work'
+       order by c.is_primary desc limit 1`,
+      [id],
+    );
+    expect(decisionEmail.rows[0].to_email).toBe(submitterEmail.rows[0].email);
   });
 
   it("rejects seven steps and accepts six", async () => {

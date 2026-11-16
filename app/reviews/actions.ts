@@ -12,8 +12,11 @@ import {
   type RatingPoint,
   type ReviewTemplateItem,
 } from "@/lib/server/reviews";
+import { requireRole, requireUser } from "@/lib/auth/session";
+import { isAdmin } from "@/lib/auth/permissions";
 
 export async function saveTemplateAction(formData: FormData) {
+  await requireRole("client_admin", "consultant");
   const id = String(formData.get("id") ?? "") || undefined;
   const items = JSON.parse(String(formData.get("items") ?? "[]")) as (Omit<ReviewTemplateItem, "id"> & { id?: string })[];
   const points = JSON.parse(String(formData.get("points") ?? "[]")) as RatingPoint[];
@@ -33,6 +36,7 @@ export async function saveTemplateAction(formData: FormData) {
 }
 
 export async function reviewAssignmentAction(formData: FormData) {
+  const user = await requireUser();
   const assignmentId = String(formData.get("assignmentId") ?? "");
   const items = JSON.parse(String(formData.get("items") ?? "[]")) as { itemId: string; rating: number | null; comment: string }[];
   await saveReviewAssignment({
@@ -40,12 +44,15 @@ export async function reviewAssignmentAction(formData: FormData) {
     overallComment: String(formData.get("overallComment") ?? ""),
     items,
     submit: formData.get("mode") === "submit",
+    viewerWorkerId: user.workerId,
+    allowAdmin: isAdmin(user),
   });
   revalidatePath(`/reviews/assignments/${assignmentId}`);
   redirect(`/reviews/assignments/${assignmentId}?saved=1`);
 }
 
 export async function calibrationAction(formData: FormData) {
+  await requireRole("client_admin", "consultant");
   await saveCalibration({
     cycleId: String(formData.get("cycleId") ?? ""),
     workerId: String(formData.get("workerId") ?? ""),
@@ -57,18 +64,21 @@ export async function calibrationAction(formData: FormData) {
 }
 
 export async function reviewCycleStatusAction(formData: FormData) {
+  await requireRole("client_admin", "consultant");
   const cycleId = String(formData.get("cycleId") ?? "");
   await setReviewCycleStatus(cycleId, String(formData.get("status") ?? "planning"));
   revalidatePath(`/reviews/${cycleId}`);
 }
 
 export async function releaseReviewCycleAction(formData: FormData) {
+  await requireRole("client_admin", "consultant");
   const cycleId = String(formData.get("cycleId") ?? "");
   await releaseReviewCycle(cycleId);
   revalidatePath(`/reviews/${cycleId}`);
 }
 
 export async function goalProgressAction(formData: FormData) {
+  await requireRole("client_admin", "consultant");
   const goalId = String(formData.get("goalId") ?? "");
   await updateGoalProgress(goalId, Number(formData.get("progress") ?? 0), String(formData.get("status") ?? "on_track"));
   revalidatePath("/reviews");

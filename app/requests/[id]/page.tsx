@@ -10,6 +10,8 @@ import {
   reassignChangeRequestAction,
   withdrawChangeRequestAction,
 } from "@/app/requests/actions";
+import { requireRole } from "@/lib/auth/session";
+import { isAdmin } from "@/lib/auth/permissions";
 
 export const dynamic = "force-dynamic";
 
@@ -20,13 +22,14 @@ export default async function ChangeRequestDetailPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ error?: string | string[] }>;
 }) {
+  const user = await requireRole("client_admin", "consultant", "manager");
   const { id } = await params;
   const query = await searchParams;
   const error = typeof query.error === "string" ? query.error : null;
   try {
     const [request, options] = await Promise.all([
-      getChangeRequestDetail(id),
-      getChangeRequestFormData(),
+      getChangeRequestDetail(id, user),
+      getChangeRequestFormData(user),
     ]);
     if (!request) return <p className="rounded border bg-white p-5">Change request not found.</p>;
     const pendingStep = request.steps.find((step) => step.status === "pending");
@@ -43,10 +46,10 @@ export default async function ChangeRequestDetailPage({
           <p><span className="text-sm text-slate-500">Effective date</span><br />{request.effectiveDate}</p>
           <p><span className="text-sm text-slate-500">Reason</span><br />{request.reason || "—"}</p>
         </section>
-        {request.status === "pending" && request.submittedByWorkerId && (
+        {request.status === "pending" && request.submittedByWorkerId === user.workerId && (
           <form action={withdrawChangeRequestAction}>
             <input type="hidden" name="requestId" value={request.id} />
-            <input type="hidden" name="submitterWorkerId" value={request.submittedByWorkerId} />
+            <input type="hidden" name="submitterWorkerId" value={request.submittedByWorkerId ?? ""} />
             <button className="rounded border border-rose-300 bg-white px-3 py-2 text-sm text-rose-700">Withdraw request</button>
           </form>
         )}
@@ -64,7 +67,7 @@ export default async function ChangeRequestDetailPage({
               </div>
               {step.decidedByName && <p className="mt-2 text-sm text-slate-600">Decided by {step.decidedByName}{step.decidedAt ? ` · ${new Date(step.decidedAt).toLocaleString()}` : ""}</p>}
               {step.comment && <p className="mt-2 rounded bg-slate-50 p-3 text-sm">{step.comment}</p>}
-              {step.status === "pending" && step.eligibleWorkerIds.length === 0 && (
+              {isAdmin(user) && step.status === "pending" && step.eligibleWorkerIds.length === 0 && (
                 <div className="mt-4 rounded border border-amber-200 bg-amber-50 p-3">
                   <p className="text-sm font-medium text-amber-900">No eligible approver — reassign</p>
                   <form action={reassignChangeRequestAction} className="mt-2 flex flex-wrap gap-2">

@@ -3,6 +3,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { dataCoverage, periodFor, resolveAnalyticsSelection, DASHBOARDS } from "@/lib/metrics/views";
 import type { ChartFormat, DataRequirement, ViewResult } from "@/lib/metrics/views";
 import { getWorkforceDataset } from "@/lib/workforce";
+import { requireRole } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,7 @@ type SearchParams = Promise<{
 }>;
 
 export default async function AnalyticsPage({ searchParams }: { searchParams: SearchParams }) {
+  await requireRole("client_admin", "consultant");
   const query = await searchParams;
   const selection = resolveAnalyticsSelection(query.d, query.v, query.p);
   const format = selection.view.formats.includes(query.f as ChartFormat)

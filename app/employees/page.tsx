@@ -1,8 +1,10 @@
 import { Badge, statusTone } from "@/components/Badge";
 import { PageHeader } from "@/components/PageHeader";
 import { employees } from "@/lib/data";
+import { requireUser } from "@/lib/auth/session";
 
-export default function EmployeesPage() {
+export default async function EmployeesPage() {
+  await requireUser("/employees");
   return (
     <div>
       <PageHeader

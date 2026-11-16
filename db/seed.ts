@@ -37,6 +37,11 @@ function splitName(name: string): { firstName: string; middleName: string | null
   };
 }
 
+function workEmail(name: string, employeeId: string) {
+  const local = name.toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "");
+  return `${local}+${employeeId}@torreytools.com`;
+}
+
 function dueDate(cycle: string): string {
   if (cycle.startsWith("2025")) return "2025-12-15";
   return cycle.includes("Mid-year") ? "2026-06-30" : "2026-12-15";
@@ -223,6 +228,26 @@ export async function seedDemo(pool: Pool): Promise<void> {
       );
       const workerId = workerResult.rows[0].id;
       workerIds.set(person.id, workerId);
+      const email = workEmail(person.name, person.id);
+      await client.query(
+        `insert into worker_contacts (organization_id, worker_id, kind, usage, value, is_primary)
+         values ($1, $2, 'email', 'work', $3, true)`,
+        [organizationId, workerId, email],
+      );
+      const isPeopleTeam = /^(hr|people)$/i.test(person.department);
+      await client.query(
+        `insert into portal_users
+           (organization_id, email, display_name, role, worker_id, can_view_compensation)
+         values ($1, $2, $3, $4, $5, $6)`,
+        [
+          organizationId,
+          email,
+          person.name,
+          isPeopleTeam ? "client_admin" : managerIds.has(person.id) ? "manager" : "employee",
+          workerId,
+          isPeopleTeam,
+        ],
+      );
 
       const periodResult = await client.query<{ id: string }>(
         `insert into employment_periods
@@ -241,6 +266,12 @@ export async function seedDemo(pool: Pool): Promise<void> {
         [organizationId, workerId, amountCents, person.hireDate, person.terminationDate],
       );
     }
+
+    await client.query(
+      `insert into portal_users (organization_id, email, display_name, role)
+       values ($1, 'consultant@torreytools.com', 'Torrey Tools Consultant', 'consultant')`,
+      [organizationId],
+    );
 
     for (const person of people) {
       const workerId = workerIds.get(person.id)!;
@@ -603,7 +634,9 @@ export async function seedDemo(pool: Pool): Promise<void> {
           [organizationId, `${invitee.person.managerId}@example.invalid`, `${config.title} results`, `View results: /r/${shareToken}`, `/r/${shareToken}`, share.rows[0].id],
         );
       }
-      await refreshManagerSurveySnapshots(client, organizationId, surveyId);
+      if (config.status === "closed") {
+        await refreshManagerSurveySnapshots(client, organizationId, surveyId);
+      }
     }
 
     const ratingPoints = [
@@ -887,6 +920,58 @@ export async function seedDemo(pool: Pool): Promise<void> {
           seriesIndex % 2 === 0 ? "2026-10-15T12:00:00Z" : null],
       );
       seriesIndex++;
+    }
+
+    const feedbackManager = activePeople.find(
+      (person) => managerIds.has(person.id) && !/^(hr|people)$/i.test(person.department),
+    );
+    if (feedbackManager) {
+      const subjects = activePeople.filter((person) => person.managerId === feedbackManager.id);
+      const peerPool = activePeople.filter((person) => person.id !== feedbackManager.id);
+      for (const [requestIndex, subject] of [subjects[0], subjects[1] ?? subjects[0]].entries()) {
+        if (!subject) continue;
+        const recipients = peerPool.filter((person) => person.id !== subject.id).slice(0, 5);
+        if (recipients.length < 5) continue;
+        const request = await client.query<{ id: string }>(
+          `insert into feedback_requests
+             (organization_id, requested_by_worker_id, subject_worker_id, message, due_date)
+           values ($1,$2,$3,$4,'2026-12-15') returning id`,
+          [
+            organizationId,
+            workerIds.get(feedbackManager.id),
+            workerIds.get(subject.id),
+            requestIndex === 0
+              ? "What is helping this person collaborate effectively?"
+              : "Share one constructive way this person can improve teamwork.",
+          ],
+        );
+        for (const [peerIndex, peer] of recipients.entries()) {
+          const recipient = await client.query<{ id: string }>(
+            `insert into feedback_request_recipients (request_id, peer_worker_id, token)
+             values ($1,$2,$3) returning id`,
+            [request.rows[0].id, workerIds.get(peer.id), randomBytes(32).toString("base64url")],
+          );
+          if (requestIndex === 0 ? peerIndex < 4 : peerIndex < 2) {
+            await client.query(
+              `insert into feedback_responses
+                 (request_id, recipient_id, collaboration_rating, keep_doing, do_differently, anything_else)
+               values ($1,$2,$3,$4,$5,$6)`,
+              [
+                request.rows[0].id,
+                recipient.rows[0].id,
+                3 + (peerIndex % 3),
+                "Continue sharing context early.",
+                "Invite quieter teammates into planning.",
+                peerIndex % 2 ? null : "The team appreciates the follow-through.",
+              ],
+            );
+            await client.query(
+              "update feedback_request_recipients set submitted_at=now() where id=$1",
+              [recipient.rows[0].id],
+            );
+          }
+        }
+      }
     }
 
     await seedChangeRequests(client, organizationId, workerIds, {

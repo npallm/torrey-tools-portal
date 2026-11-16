@@ -3,10 +3,12 @@ import { DatabaseNotice } from "@/components/DatabaseNotice";
 import { createSurveyAction } from "@/app/surveys/actions";
 import { isDatabaseRequiredError } from "@/lib/server/common";
 import { getActiveQuestionBank } from "@/lib/server/surveys";
+import { requireRole } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
 export default async function NewSurveyPage() {
+  await requireRole("client_admin", "consultant");
   try {
     const questions = await getActiveQuestionBank();
     return (

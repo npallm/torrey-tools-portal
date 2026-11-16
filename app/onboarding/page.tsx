@@ -1,8 +1,10 @@
 import { Badge } from "@/components/Badge";
 import { PageHeader } from "@/components/PageHeader";
 import { employeeName, onboardingTasks } from "@/lib/data";
+import { requireUser } from "@/lib/auth/session";
 
-export default function OnboardingPage() {
+export default async function OnboardingPage() {
+  await requireUser("/onboarding");
   const byEmployee = new Map<string, typeof onboardingTasks>();
   for (const t of onboardingTasks) {
     const list = byEmployee.get(t.employeeId) ?? [];

@@ -11,12 +11,18 @@ Client portal for Torrey Tools HR consulting — covers core HR work and read-on
 - **Documents** — policies, handbook, forms, compliance records
 - **Onboarding** — new-hire checklists
 - **Reviews** — performance review cycles
+- **Surveys** — manager-effectiveness surveys published at close
+- **1:1 tracking** — private participant notes, agendas and action items
+- **Peer feedback** — manager-requested feedback with a response threshold
+- **Succession** — critical-role slates and development actions
+- **Single sign-on** — `/settings/sso` provider configuration for admins
+- **Sign in** — `/login` with email-domain discovery and optional local demo accounts
 
 ## Stack
 
 Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS
 
-Directory, PTO, and other existing portal pages continue to use the fixtures in `lib/data.ts`. Analytics uses a separate workforce dataset, loading it from Postgres when configured and falling back to sample data when no database is available.
+The portal uses Postgres-backed organization data for workforce, surveys, reviews, approvals, 1:1s, succession and peer feedback. Local demo sign-in and seeded accounts are available only when `AUTH_DEV_LOGIN=true` and `NODE_ENV` is not `production`.
 
 ## Analytics and data
 
@@ -38,6 +44,12 @@ The database scripts load `.env.local`; they do not have a built-in database URL
 Employee change requests are stored in Postgres and can use a sequential approval chain of one to six people or positions. Maintain reusable chains at `/approvals/templates`; position approvers resolve to current holders when a request is submitted. Approvers receive a unique link, while the request page tracks decisions, comments, and the event timeline. Messages are queued in `/outbox` for review and delivery.
 
 Set `APP_BASE_URL` to the externally reachable origin before sending approval links outside local development. If unset, links use `http://localhost:3000`.
+
+### Authentication and peer feedback
+
+Configure OIDC or SAML providers at `/settings/sso`; see [SSO setup](docs/auth-sso.md). Manager-effectiveness survey scores are published only after a survey closes. Peer feedback results remain hidden until the request's minimum response count is reached. Managers and reports see only their own private 1:1 notes.
+
+Routes include `/one-on-ones`, `/feedback`, `/surveys`, `/reviews`, and `/succession`. Feedback invitations are available at `/f/{token}`; survey invitations and manager result shares use `/s/{token}` and `/r/{token}`.
 
 Run the metric tests with:
 

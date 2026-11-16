@@ -464,6 +464,7 @@ export async function getReviewAssignment(assignmentId: string) {
       cycle_name: string;
       cycle_status: string;
       subject_worker_id: string;
+      reviewer_worker_id: string;
       subject_name: string;
       reviewer_role: ReviewRole;
       status: ReviewStatus;
@@ -475,7 +476,7 @@ export async function getReviewAssignment(assignmentId: string) {
       points: RatingPoint[];
     }>(
       `select a.id, a.cycle_id, c.name as cycle_name, c.status as cycle_status,
-              a.subject_worker_id,
+              a.subject_worker_id, a.reviewer_worker_id,
               coalesce(w.preferred_name, w.first_name) || ' ' || w.last_name as subject_name,
               a.reviewer_role, a.status, a.overall_comment, t.id as template_id, t.name as template_name,
               t.include_goals, t.goals_weight, s.points
@@ -553,6 +554,7 @@ export async function getReviewAssignment(assignmentId: string) {
       cycleName: assignment.cycle_name,
       cycleStatus: assignment.cycle_status,
       subjectWorkerId: assignment.subject_worker_id,
+      reviewerWorkerId: assignment.reviewer_worker_id,
       subjectName: assignment.subject_name,
       role: assignment.reviewer_role,
       status: assignment.status,
@@ -598,11 +600,48 @@ export async function getReviewAssignment(assignmentId: string) {
   });
 }
 
+export async function getMyReviewAssignments(reviewerWorkerId: string) {
+  return withFeatureDatabase(async (pool) => {
+    const organizationId = await demoOrganizationId(pool);
+    const result = await pool.query<{
+      id: string;
+      cycle_name: string;
+      cycle_status: string;
+      subject_name: string;
+      reviewer_role: ReviewRole;
+      status: ReviewStatus;
+      due_date: string | null;
+    }>(
+      `select a.id, c.name as cycle_name, c.status as cycle_status,
+              coalesce(sw.preferred_name, sw.first_name) || ' ' || sw.last_name as subject_name,
+              a.reviewer_role, a.status,
+              case when a.reviewer_role='self' then c.self_due else c.manager_due end as due_date
+       from review_assignments a
+       join review_cycles c on c.id=a.cycle_id
+       join workers sw on sw.id=a.subject_worker_id
+       where a.organization_id=$1 and a.reviewer_worker_id=$2
+       order by c.period_end desc, subject_name, a.reviewer_role`,
+      [organizationId, reviewerWorkerId],
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      cycleName: row.cycle_name,
+      cycleStatus: row.cycle_status,
+      subjectName: row.subject_name,
+      role: row.reviewer_role,
+      status: row.status,
+      dueDate: row.due_date,
+    }));
+  });
+}
+
 export async function saveReviewAssignment(input: {
   assignmentId: string;
   overallComment: string;
   items: { itemId: string; rating: number | null; comment: string }[];
   submit: boolean;
+  viewerWorkerId?: string | null;
+  allowAdmin?: boolean;
 }) {
   return withFeatureDatabase(async (pool) => {
     const client = await pool.connect();
@@ -613,11 +652,13 @@ export async function saveReviewAssignment(input: {
         id: string;
         status: ReviewStatus;
         reviewer_role: ReviewRole;
+        reviewer_worker_id: string;
         subject_worker_id: string;
         cycle_id: string;
         template_id: string;
       }>(
-        `select a.id, a.status, a.reviewer_role, a.subject_worker_id, a.cycle_id, c.template_id
+        `select a.id, a.status, a.reviewer_role, a.reviewer_worker_id,
+                a.subject_worker_id, a.cycle_id, c.template_id
          from review_assignments a join review_cycles c on c.id = a.cycle_id
          where a.id = $1 and a.organization_id = $2
          for update`,
@@ -625,6 +666,11 @@ export async function saveReviewAssignment(input: {
       );
       const assignment = assignmentResult.rows[0];
       if (!assignment) throw new Error("Review assignment not found.");
+      if (
+        input.viewerWorkerId !== undefined
+        && assignment.reviewer_worker_id !== input.viewerWorkerId
+        && !input.allowAdmin
+      ) throw new Error("This review assignment is not assigned to you.");
       if (assignment.status === "submitted") throw new Error("This review has already been submitted.");
 
       const allowed = await client.query<{
